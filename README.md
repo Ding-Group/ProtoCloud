@@ -31,7 +31,7 @@ This document provides an overview of the parameters used in the Prototype VAE m
 - `ortho_coef`: Orthogonality loss coefficient. Default: `0.3`
 - `activation`: Activation function for the model (currently supports 'relu'). Default: `relu`
 - `use_bn`: Use batch normalization or not (0 or 1). Default: `1`
-- `optimizer`: Optimizer for training ('Adam' or 'AdamW'). Default: `Adam`
+- `optimizer`: Optimizer for training ('Adam' or 'AdamW'). Default: `AdamW`
 - `lr`: Learning rate for training. Default: `1e-3`
 - `epochs`: Number of training epochs. Default: `100`
 - `target_accu`: Minimum target accuracy to save the model. Default: `0.7`
