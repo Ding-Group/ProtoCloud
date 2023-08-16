@@ -1,0 +1,280 @@
+import os
+import pickle 
+import math
+import torch
+import numpy as np
+import pandas as pd
+import scanpy as sc
+import anndata
+from sklearn.preprocessing import LabelEncoder
+from sklearn.metrics import confusion_matrix, accuracy_score, balanced_accuracy_score, classification_report
+import joblib
+
+import src.glo as glo
+EPS = glo.get_value('EPS')
+
+
+### Settings
+#######################################################
+def makedir(path):
+    '''
+    if path does not exist in the file system, create it
+    '''
+    if not os.path.exists(path):
+        os.makedirs(path)
+
+
+def seed_torch(device, seed = 7):
+    """
+    Sets Seed for reproducible experiments.
+    """
+    print("Global seed set to {}".format(seed))
+    import random
+    random.seed(seed)
+    os.environ['PYTHONHASHSEED'] = str(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if device.type == 'cuda':
+        torch.cuda.manual_seed(seed)
+        torch.cuda.manual_seed_all(seed)
+    torch.backends.cudnn.benchmark = False
+    torch.backends.cudnn.deterministic = True
+
+
+def save_model_dict(model_dict, model_path):
+    with open(model_path + 'model_dict.pkl', 'wb') as f:
+        pickle.dump(model_dict, f)
+    print("model dict saved")
+
+
+def load_model_dict(model_path):
+    with open(model_path + 'model_dict.pkl', 'rb') as f:
+        loaded_dict = pickle.load(f)
+    return loaded_dict
+
+
+
+### data processing
+#######################################################
+def one_hot_encoder(target, n_cls):
+    assert torch.max(target).item() < n_cls
+
+    target = target.view(-1, 1)
+    onehot = torch.zeros(target.size(0), n_cls)
+    onehot = onehot.to(target.device)
+    onehot.scatter_(1, target.long(), 1)
+
+    return onehot
+
+
+def load_var_names(filename):
+    import h5py
+    
+    with h5py.File(filename, 'r') as f:
+        var_names = [name.decode('utf-8') for name in f['var']['index']]
+    return var_names
+
+
+
+### Model Settings
+#######################################################
+def get_custom_exp_code(args):
+    '''
+    Creates Experiment Code from argparse + Folder Name to Save Results
+    model_lr_epochs_batchsize_dataset
+    '''
+    param_code = args.model
+    if 'protoCloud' in args.model:
+        # ### Model Type
+        # param_code += '_p%s'%str(args.prototypes_per_class)
+        # param_code += '_l%s'%str(args.latent_dim)
+        # Learning Rate
+        param_code += '_lr%s' %format(args.lr, '.0e')
+        # Number of Epochs
+        param_code += '_e%s' %format(args.epochs, 'd')
+    # Batch Size
+    param_code += '_b%s' % str(args.batch_size)
+
+    ### dataset
+    param_code += '_%s' % args.dataset
+    if args.topngene != None:
+        param_code += '_top%s' % str(args.topngene)
+    if args.split != None:
+        param_code += '_%s' % str(args.split)
+
+    return param_code
+
+
+
+### Model Assistance
+#######################################################
+def log_likelihood_nb(x, mu, theta, eps = EPS):
+    # theta should be 1 / r, here theta = r
+    log_mu_theta = torch.log(mu + theta + eps)
+
+    ll = torch.lgamma(x + theta) - torch.lgamma(theta) - torch.lgamma(x + 1) \
+        + theta * (torch.log(theta + eps) - log_mu_theta) \
+        + x * (torch.log(mu + eps) - log_mu_theta)
+
+    return ll
+
+def log_likelihood_normal(x, mu, logvar):
+    var = torch.exp(logvar)
+    ll = -0.5 * len(x) * torch.log(2 * math.pi * var) \
+                        - torch.sum((x - mu) ** 2) / (2 * var)
+    return ll
+
+
+
+
+### Results
+#######################################################
+def print_model(model):
+    print(model)
+    print("Number of parameters: ", sum(p.numel() for p in model.parameters() if p.requires_grad))
+
+
+def save_model(model, model_dir, exp_code, accu=None, log=print):
+    # save model to model_dir with name exp_code + accu
+    save_path = os.path.join(model_dir, (exp_code + '.pth'))
+    if accu != None:
+        with open(os.path.join(model_dir,'saved_model.txt'), 'w') as f:
+            f.write('epoch:' + exp_code + ", acc:{0:.4f}".format(accu))
+
+    print('\tSaving model to {0}...'.format(save_path))
+    torch.save(model.state_dict(), save_path)
+    # torch.save(model, save_path)
+
+
+def save_model_w_condition(model, model_dir, exp_code, accu, target_accu, log=print):
+    '''
+    model: this is not the multigpu model
+    '''
+    save_path = os.path.join(model_dir, exp_code + '.pth')
+    if accu > target_accu:
+        log('\tAccuracy above {0:.2f}%'.format(target_accu * 100))
+        print('Saving model to {0}...'.format(save_path))
+        with open(os.path.join(model_dir,'saved_model.txt'), 'w') as f:
+            f.write('Setting:' + exp_code + ", acc:{0:.4f}".format(accu))
+        torch.save(model.state_dict(), save_path)
+        # torch.save(model, save_path)
+    
+        prototype_cells = model.get_prototype_cells().detach().cpu().numpy()
+        prototype_cells = (prototype_cells + 1) / 2.0     # scale to [0,1]
+        np.save(model_dir + "proto/" + exp_code+ '.npy', prototype_cells)
+        print("\tModel and prototypes saved")
+
+    else:
+        print('\tAccuracy below {0:.2f}%, model not saved'.format(target_accu * 100))
+
+
+def save_prototype_cells(model, result_dir, exp_code):
+    prototype_cells = model.get_prototype_cells().detach().cpu().numpy()
+    prototype_cells = (prototype_cells + 1) / 2.0     # scale to [0,1]
+    protoCell_dir = result_dir + exp_code +'_protoCells.npy'
+
+    np.save(protoCell_dir, prototype_cells)
+    print("\tPrototypes saved")
+
+
+def print_results(epoch, acc, loss, recon=None, kl=None, ce=None, ortho=None, atomic=None, is_train=True):
+    if is_train:
+        print('Train epoch: {0}'.format(epoch),
+            '\taccu: {0}%'.format(acc * 100),
+            '\tloss: {0}'.format(loss),
+            '\trecons: {0}'.format(recon),
+            '\tKL: {0}'.format(kl),
+            '\tcross ent: {0}'.format(ce),
+            '\tortho: {0}'.format(ortho),
+            '\tatomic: {0}'.format(atomic),
+            )
+    else:
+        print('Valid epoch: {0}'.format(epoch),
+            '\taccu: {0}%'.format(acc * 100),
+            '\ttotal loss: {0}'.format(loss),
+            )
+
+
+def model_metrics(predicted, label):
+    """
+    Evaluate the prediction results. 
+    Returns the error rate, a testing report, and a confusion matrix of the results.
+    Args:
+        predicted: (pd.DataFrame) DataFrame containing actual and predicted labels
+                col_names: 'celltype', 'prob1', 'prob2', 'idx1', 'idx2'
+    """
+    actual_y = predicted['celltype']
+    pred_y = predicted['idx1']
+    
+    rep = classification_report(actual_y, pred_y, output_dict = True)
+    cm = confusion_matrix(actual_y, pred_y, labels=label)
+    if cm is None:
+        raise Exception("Some error in generating confusion matrix")
+    misclass_rate = 1 - accuracy_score(actual_y, pred_y)
+    
+    return misclass_rate, rep, cm
+
+
+def ordered_class(data, args):
+    """
+    Return the ordered class index for the dataset.
+    For RGC: sorted by celltype number
+    Others: sorted by similiar celltypes
+    """
+    # if args.dataset == 'RGC':
+    #     # Sort by extracting the number at the beginning of each string
+    #     sorted_label = sorted(data.cell_encoder.classes_, key=lambda x: int(x.split('_')[0]))
+    #     sorted_index = data.cell_encoder.transform(sorted_label)
+    #     return sorted_index
+    # else:
+    #     return data.cell_encoder.transform(data.cell_encoder.classes_)
+    return data.cell_encoder.transform(data.cell_encoder.classes_)
+
+
+
+def save_file(results, args, file_ending, save_dir=None):
+    """
+    Save the prediction results to result dir.
+    Args:
+        results:
+            (AnnData) AnnData object containing actual and predicted labels
+                adata.obs: 'celltype', 'predicted_labels'
+            OR (pd.DataFrame) DataFrame containing actual and predicted labels
+                col_names: 'celltype', 'predicted_labels'
+            OR (tuple) (misclass_rate, rep, cm)
+    """
+    if save_dir is None:
+        save_path = args.results_dir + args.exp_code + file_ending
+    else:
+        save_path = save_dir + args.exp_code + file_ending
+
+    if isinstance(results, anndata.AnnData):
+        results.write(save_path)
+    elif isinstance(results, pd.DataFrame):
+        results.to_csv(save_path)
+    elif isinstance(results, np.ndarray):
+        np.save(save_path, results)
+    elif isinstance(results, tuple):
+        np.save(save_path, results)
+    elif isinstance(results, LabelEncoder):   # save label encoder
+        joblib.dump(results, save_path)
+    else:
+        raise NotImplementedError("Data type not supported")
+    # print("Saved results")
+
+
+def load_file(args, file_ending):
+    file_path = args.results_dir + args.exp_code + file_ending
+    try:
+        if file_path.endswith('.csv'):
+            return pd.read_csv(file_path)
+        elif file_path.endswith('.npy'):
+            return np.load(file_path, allow_pickle = True)
+        elif file_path.endswith('.h5ad'):
+            return sc.read(file_path)
+        elif file_path.endswith('.joblib'):     # load LabelEncoder
+            return joblib.load(file_path)
+        else:
+            raise NotImplementedError("File format not supported")
+    except:
+        raise FileNotFoundError(file_path + " not found")
