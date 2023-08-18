@@ -22,8 +22,7 @@ def form_block(in_dim, out_dim, use_bn = True, activation = 'relu', bias = True)
         bias (bool): add a bias to the layers, defaults to True
     returns (array): the layers specified
     """
-    layers = []
-    layers.append(nn.Linear(in_dim, out_dim, bias = bias))
+    layers = [nn.Linear(in_dim, out_dim, bias=bias)]
     if use_bn:
         layers.append(nn.BatchNorm1d(out_dim))
     # activation
@@ -57,11 +56,10 @@ class protoCloud(nn.Module):
         self.raw_input = raw_input
         self.activation = activation
         self.use_bn = use_bn
-        self.obs_dist = [None  if not self.raw_input else obs_dist]
+        self.obs_dist = None if not self.raw_input else obs_dist
         self.nb_dispersion = nb_dispersion
         self.epsilon = EPS
 
-        
 
         # prototype-class labeled matrix
         self.prototype_class_identity = torch.zeros(self.num_prototypes, self.num_classes)
@@ -253,10 +251,10 @@ class protoCloud(nn.Module):
 
 
     def atomic_loss(self, sim_scores, mask):
-        repulsion = torch.mean(torch.max(sim_scores * mask, 1).values)
-        attraction = torch.mean(torch.max(sim_scores * torch.logical_not(mask), 1).values)
+        attraction = torch.mean(torch.max(sim_scores * mask, 1).values)
+        repulsion = torch.mean(torch.max(sim_scores * torch.logical_not(mask), 1).values)
 
-        return attraction - repulsion
+        return repulsion - attraction
 
 
     def get_prototype_cells(self):
