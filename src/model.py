@@ -12,7 +12,7 @@ EPS = glo.get_value('EPS')
 
 
 
-def form_block(in_dim, out_dim, use_bn = True, activation = 'relu', bias = True):
+def form_block(in_dim, out_dim, use_bn = True, activation = 'relu', bias = False):
     """
     Constructs a fully connected layer with bias, batch norm, and then leaky relu activation function
     args:
@@ -89,20 +89,20 @@ class protoCloud(nn.Module):
         for i, (in_dim, out_dim) in enumerate(zip(self.encoder_layer_sizes[:-1], self.encoder_layer_sizes[1:])):
             self.encoder.add_module(str(i), form_block(in_dim, out_dim, use_bn, activation))
 
-        self.z_mean = nn.Linear(self.encoder_layer_sizes[-1], latent_dim, bias = False)
-        self.z_log_var = nn.Linear(self.encoder_layer_sizes[-1], latent_dim, bias = False)
+        self.z_mean = nn.Linear(self.encoder_layer_sizes[-1], latent_dim, bias = True)
+        self.z_log_var = nn.Linear(self.encoder_layer_sizes[-1], latent_dim, bias = True)
         
         # Decoder
         self.decoder = nn.Sequential()
         for i, (in_dim, out_dim) in enumerate(zip(self.decoder_layer_sizes[:-1], self.decoder_layer_sizes[1:])):
             self.decoder.add_module(str(i), form_block(in_dim, out_dim, use_bn, activation))
-        self.px_mean = nn.Linear(self.decoder_layer_sizes[-1], input_dim, bias = False)
+        self.px_mean = nn.Linear(self.decoder_layer_sizes[-1], input_dim, bias = True)
 
         # likelihood
         self.softmax = nn.Softmax(dim = -1)
         # nb dispersion: gene-specific
         self.px_theta = nn.Sequential(
-            nn.Linear(self.decoder_layer_sizes[-1], input_dim, bias = False),
+            nn.Linear(self.decoder_layer_sizes[-1], input_dim, bias = True),
             nn.Softplus())   # output always positive
         # nb dispersion: celltype-specific
         self.theta = nn.Parameter(torch.randn(self.input_dim, self.num_classes))
@@ -209,7 +209,7 @@ class protoCloud(nn.Module):
             recon_loss = recon_loss / self.input_dim * self.latent_dim / 2.0
 
         else:
-            x = F.normalize(x, dim = 0)
+            # x = F.normalize(x, dim = 0)
             recon_loss = torch.nn.functional.mse_loss(px_mu, x, reduction = "mean")
             dispersion = None 
 
