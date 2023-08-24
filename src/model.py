@@ -22,8 +22,7 @@ def form_block(in_dim, out_dim, use_bn = True, activation = 'relu', bias = True)
         bias (bool): add a bias to the layers, defaults to True
     returns (array): the layers specified
     """
-    layers = []
-    layers.append(nn.Linear(in_dim, out_dim, bias = bias))
+    layers = [nn.Linear(in_dim, out_dim, bias=bias)]
     if use_bn:
         layers.append(nn.BatchNorm1d(out_dim))
     # activation
@@ -48,7 +47,9 @@ class protoCloud(nn.Module):
                  activation = 'relu', 
                  use_bn = True,
                  obs_dist = 'nb',
-                 nb_dispersion = "celltype"):
+                 nb_dispersion = "celltype",
+                #  n_batch = 1,
+                 ):
         super(protoCloud, self).__init__()
         self.input_dim = input_dim
         self.latent_dim = latent_dim
@@ -57,11 +58,11 @@ class protoCloud(nn.Module):
         self.raw_input = raw_input
         self.activation = activation
         self.use_bn = use_bn
-        self.obs_dist = [None  if not self.raw_input else obs_dist]
+        self.obs_dist = None if not self.raw_input else obs_dist
         self.nb_dispersion = nb_dispersion
         self.epsilon = EPS
+        # self.n_batch = n_batch
 
-        
 
         # prototype-class labeled matrix
         self.prototype_class_identity = torch.zeros(self.num_prototypes, self.num_classes)
@@ -78,33 +79,35 @@ class protoCloud(nn.Module):
 
         #######################################################
         if encoder_layer_sizes is None:
-            self.encoder_layer_sizes = [input_dim, 128, 64, 32]
+            self.encoder_layer_sizes = [self.input_dim, 128, 64, 32]
         else:
             self.encoder_layer_sizes = encoder_layer_sizes
         if decoder_layer_sizes is None:
-            self.decoder_layer_sizes = [latent_dim, 32, 128]
+            # self.latent_dim += self.n_batch
+            self.decoder_layer_sizes = [self.latent_dim, 32, 128]
         else:
             self.decoder_layer_sizes = decoder_layer_sizes
+            # self.decoder_layer_sizes[0] += self.n_batch
 
         # Encoder
         self.encoder = nn.Sequential()
         for i, (in_dim, out_dim) in enumerate(zip(self.encoder_layer_sizes[:-1], self.encoder_layer_sizes[1:])):
             self.encoder.add_module(str(i), form_block(in_dim, out_dim, use_bn, activation))
 
-        self.z_mean = nn.Linear(self.encoder_layer_sizes[-1], latent_dim, bias = False)
-        self.z_log_var = nn.Linear(self.encoder_layer_sizes[-1], latent_dim, bias = False)
+        self.z_mean = nn.Linear(self.encoder_layer_sizes[-1], latent_dim, bias = True)
+        self.z_log_var = nn.Linear(self.encoder_layer_sizes[-1], latent_dim, bias = True)
         
         # Decoder
         self.decoder = nn.Sequential()
         for i, (in_dim, out_dim) in enumerate(zip(self.decoder_layer_sizes[:-1], self.decoder_layer_sizes[1:])):
             self.decoder.add_module(str(i), form_block(in_dim, out_dim, use_bn, activation))
-        self.px_mean = nn.Linear(self.decoder_layer_sizes[-1], input_dim, bias = False)
+        self.px_mean = nn.Linear(self.decoder_layer_sizes[-1], input_dim, bias = True)
 
         # likelihood
         self.softmax = nn.Softmax(dim = -1)
         # nb dispersion: gene-specific
         self.px_theta = nn.Sequential(
-            nn.Linear(self.decoder_layer_sizes[-1], input_dim, bias = False),
+            nn.Linear(self.decoder_layer_sizes[-1], input_dim, bias = True),
             nn.Softplus())   # output always positive
         # nb dispersion: celltype-specific
         self.theta = nn.Parameter(torch.randn(self.input_dim, self.num_classes))
@@ -116,7 +119,7 @@ class protoCloud(nn.Module):
 
 
 
-    def forward(self, x):
+    def forward(self, x, batch_id=None):
         self.lib_size = torch.sum(x, 1, True)
 
         if self.raw_input:     # raw: 1
@@ -129,6 +132,12 @@ class protoCloud(nn.Module):
 
         sim_scores = self.calc_sim_scores(z)
         pred = self.classifier(sim_scores)
+
+        # # add batch to decoder
+        # batch = torch.nn.functional.one_hot(batch_id, num_classes=self.n_batch)
+        # print("batch_dim", batch.shape)
+        # z = torch.concat((z, batch), axis=1)
+        # print("z_dim", z.shape)
 
         px = self.decoder(z)
         px_mu = self.px_mean(px)
@@ -211,7 +220,7 @@ class protoCloud(nn.Module):
             recon_loss = recon_loss / self.input_dim * self.latent_dim / 2.0
 
         else:
-            x = F.normalize(x, dim = 0)
+            # x = F.normalize(x, dim = 0)
             recon_loss = torch.nn.functional.mse_loss(px_mu, x, reduction = "mean")
             dispersion = None 
 
@@ -253,10 +262,10 @@ class protoCloud(nn.Module):
 
 
     def atomic_loss(self, sim_scores, mask):
-        repulsion = torch.mean(torch.max(sim_scores * mask, 1).values)
-        attraction = torch.mean(torch.max(sim_scores * torch.logical_not(mask), 1).values)
+        attraction = torch.mean(torch.max(sim_scores * mask, 1).values)
+        repulsion = torch.mean(torch.max(sim_scores * torch.logical_not(mask), 1).values)
 
-        return attraction - repulsion
+        return repulsion - attraction
 
 
     def get_prototype_cells(self):

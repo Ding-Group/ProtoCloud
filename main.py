@@ -23,33 +23,39 @@ def main(args):
     ordered_celltype = ordered_class(data, args)
 
     if args.model_mode in ['train', 'plot']:
-        (train_X, test_X, train_Y, test_Y) = data.split_data(args)
+        (train_X, test_X, train_Y, test_Y, train_b, test_b) = data.split_data(args)
         print('train_Y.shape: ', train_Y.shape)
-        train_loader = data.assign_dataloader(train_X, train_Y, args.batch_size)
-        test_loader = data.assign_dataloader(test_X, test_Y, batch_size=len(test_Y))
+        train_loader = data.assign_dataloader(train_X, train_Y, train_b, args.batch_size)
+        test_loader = data.assign_dataloader(test_X, test_Y, test_b, batch_size=len(test_Y))
 
     elif args.model_mode  in ['test', 'apply']:
         test_X = data.X
         test_Y = data.Y
-        test_loader = data.assign_dataloader(test_X, test_Y, batch_size=len(test_Y))
+        test_b = data.batch
+        test_loader = data.assign_dataloader(test_X, test_Y, test_b, batch_size=len(test_Y))
 
-
+    save_file(data.cell_encoder, args, 'cell_encoder.joblib')  # save data label encoder
     # set training data related parameters
     args.training_size = len(data.Y) - len(test_Y)
     args.test_size = len(test_Y)
-    args.input_dim = len(data.gene_names)
-    args.num_classes = len(data.cell_encoder.classes_)
-    args.num_prototypes = args.num_classes * args.prototypes_per_class
+    args.n_batch = data.n_batch
 
     print('\nData: ',args.dataset)
     print('Training set size: {0}'.format(args.training_size))
     print('Test set size: {0}'.format(args.test_size))
-    print('Num genes: {0}'.format(args.input_dim))
-    print('Num classes: {0}'.format(args.num_classes))
+    print('Num of batches: {0}'.format(args.n_batch))
 
 
+    # Setup model
     #######################################################
     if args.pretrain_model_pth is None:
+        # model settings based on data
+        args.input_dim = len(data.gene_names)
+        args.num_classes = len(data.cell_encoder.classes_)
+        args.num_prototypes = args.num_classes * args.prototypes_per_class
+        print('Num genes: {0}'.format(args.input_dim))
+        print('Num classes: {0}'.format(args.num_classes))
+
         # setup model
         print('\nSetup model')
         model_dict = {"raw_input": args.raw,
@@ -61,45 +67,57 @@ def main(args):
                     "use_bn": args.use_bn,
                     "obs_dist": args.obs_dist,
                     "nb_dispersion": args.nb_dispersion,
+                    # "n_batch": args.n_batch,
                     }
         print(model_dict)
         model = protoCloud(**model_dict).to(device)
         # print(model)
-        
-        if args.model_mode == "train":
-            if args.cont_train:
-                print('\nContinue training based on existing model: ')
-                load_model(args, model)
-
-            print('\nEnter training')
-            result_trend = run_model(model, train_loader, test_loader, args)
-
-            save_model_dict(model_dict, args.model_dir)
-            save_file(result_trend, args, '_trend.npy')  # save loss & accuracy through epochs
-            save_file(get_prototypes(model), args, '_prototypes.npy') # save prototypes
-            print('\tPrototypes saved')
-        
-        else:   # "plot", "test", "apply"
-            print('\nLoad existing model: ', args.pretrain_model_pth)
+        if args.cont_train or args.model_mode != "train":
+            print('\nLoading existing model')
             load_model(args, model)
+        
+        args.model_data = None
     
-    
-    else:   # args.pretrain_model_pth is not None
+    else:   # args.pretrain_model_pth not None
         print('\nLoad existing model from: \n\t', args.pretrain_model_pth)
-        model_dict = load_model_dict(args.model_dir)
+        model_dict = load_model_dict(os.path.dirname(args.pretrain_model_pth))
         print("Loaded model parameters: \n\t", model_dict)
 
+        args.input_dim = model_dict["input_dim"]
+        args.num_classes = model_dict["num_classes"]
+        args.num_prototypes = model_dict["num_prototypes"]
+        
         model = protoCloud(**model_dict).to(device)
         load_model(args, model, model_dir = args.pretrain_model_pth)
 
-        # get model used genenames
+        # get model used dataset
         model_data = os.path.basename(args.pretrain_model_pth)
-        model_data = "_".join(model_data.split("_")[4:])[:-4]
+        args.model_exp_code = model_data[:-4]
+        args.model_data = "_".join(model_data.split("_")[4:])[:-4]
 
         # resize data to model input dim
-        test_X, test_Y = data.gene_subset(model_data)
+        test_X = data.gene_subset(args.model_data)
         print("Resized data shape:", test_X.shape)
+    
 
+    # Training
+    #######################################################
+    if args.model_mode == "train":
+        print('\nEnter training')
+        result_trend = run_model(model, train_loader, test_loader, args)
+
+        # save model to model_dir
+        save_model(model, args.model_dir, args.exp_code)
+
+        save_file(data.cell_encoder, args, 'cell_encoder.joblib')   # save data label encoder
+        save_model_dict(model_dict, args.model_dir)
+        save_file(result_trend, args, '_trend.npy')  # save loss & accuracy through epochs
+        save_file(get_prototypes(model), args, '_prototypes.npy') # save prototypes
+        print('\tPrototypes saved')
+    
+    elif args.model_mode != "plot":
+        args.plot_trend = 0
+        
 
 
     # Predictions
@@ -190,7 +208,7 @@ def main(args):
         plot_marker_venn_diagram(data.adata, args)
     
 
-    print("Finished!\n\n\n")
+    print("Finished!")
         
 
 
@@ -199,7 +217,7 @@ def main(args):
 
 import argparse
 
-parser = argparse.ArgumentParser(description = 'Prototype VAE')
+parser = argparse.ArgumentParser(description = 'ProtoCloud')
 #######################################################
 ### ----Path Parameters----
 parser.add_argument('--data_dir',       type = str, default = './data/')
@@ -217,8 +235,10 @@ parser.add_argument('--split',      type = str, default = None,
                     help = "cluster name of test data. if None, use test_ratio")
 #######################################################
 ### ----Model Parameters----
-parser.add_argument('--model',       type = str, default = 'protoCloud')
-parser.add_argument('--model_mode',  type = str, default = "plot", choices = ["train", "test", "apply", "plot"],
+parser.add_argument('--model',       type = str, default = 'protoCloud', 
+                    # choices = ['celltypist', 'svm', 'protoCloud', 'protoCloud0', 'protoCloud1', 'protoCloud2'],
+                    )
+parser.add_argument('--model_mode',  type = str, default = "test", choices = ["train", "test", "apply", "plot"],
                     help = "train model; test: z_mu for pred; apply: full test with reparametrization; plot: load and plot result files")
 parser.add_argument('--cont_train',  type = int, default = 0, help = 'Load existing model and continue training')
 # parser.add_argument('--load',  type = int, default = 0, help = 'Load existing model and continue training')
@@ -304,4 +324,4 @@ print(args)
 
 if __name__ == '__main__':
     main(args)
-    print("end script\n\n\n")
+    print("end script\n\n\n\n\n\n")

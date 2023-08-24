@@ -34,6 +34,10 @@ def run_model(model, train_loader, test_loader, args):
     else:
         raise NotImplementedError
     
+    obs_dist = model.obs_dist
+    nb_dispersion = model.nb_dispersion
+    # nb_dispersion = 'celltype'
+    
     # setup loss coef   
     coefs = {'crs_ent': 1, 'recon': 1,
                 'kl': 1, 'ortho': 0.0, 'atomic': 0.0}
@@ -47,7 +51,6 @@ def run_model(model, train_loader, test_loader, args):
     train_loss_list = []
     train_acc_list = []
     valid_acc_list = []
-    start_time = time.time()
     for epoch in range(args.epochs+1):
         train_acc, train_loss, train_recon, train_kl, \
             train_ce, train_ortho, train_atomic = _train_model(model = model, 
@@ -76,16 +79,7 @@ def run_model(model, train_loader, test_loader, args):
         train_acc_list.append(train_acc)
         valid_acc_list.append(test_acc)
     
-    end_time = time.time()
     print('\nFinished training')
-
-    elapsed_time = end_time - start_time
-    print(f"The running time is: {elapsed_time} sec")
-    
-
-    # save model to model_dir
-    save_model(model, args.model_dir, args.exp_code)
-    print('Model saved')
 
     return train_loss_list, train_acc_list, valid_acc_list
 
@@ -104,14 +98,17 @@ def _train_model(model, dataloader, optimizer, coefs):
     total_orth_loss = 0
     total_atomic_loss = 0
 
-    for i, (sample, label) in enumerate(dataloader):
+    for i, (sample, label, b) in enumerate(dataloader):
         input = sample.to(device)
         target = label.to(device)
+        # batch_id = b.to(device)
 
         with torch.enable_grad():
             pred_y, px_mu, px_theta, z_mu, z_logVar, sim_scores = model(input)
+            # pred_y, px_mu, px_theta, z_mu, z_logVar, sim_scores = model(input, batch_id)
 
-            recon_loss, kl_loss, cross_entropy, ortho_loss, atomic_loss = model.loss_function(input, target, pred_y, px_mu, px_theta, z_mu, z_logVar, sim_scores)
+            recon_loss, kl_loss, cross_entropy, \
+                ortho_loss, atomic_loss = model.loss_function(input, target, pred_y, px_mu, px_theta, z_mu, z_logVar, sim_scores)
 
             # get prediction
             _, predicted = torch.max(pred_y.data, 1)
@@ -151,7 +148,6 @@ def _train_model(model, dataloader, optimizer, coefs):
     return train_acc, loss.item(), train_recon, train_kl, train_ce, train_ortho, train_atomic
 
 
-
 def _test_model(model, dataloader, coefs): 
     # device = torch.device("cuda" if torch.cuda.is_available() else "cpu") 
     model.eval()
@@ -159,11 +155,13 @@ def _test_model(model, dataloader, coefs):
     n_examples = len(dataloader.dataset)
     n_correct = 0
 
-    for i, (sample, label) in enumerate(dataloader):
+    for i, (sample, label, b) in enumerate(dataloader):
         input = sample.to(device)
         target = label.to(device)
+        # batch_id = b.to(device)
 
         pred_y, px_mu, px_theta, z_mu, z_logVar, sim_scores = model(input)
+        # pred_y, px_mu, px_theta, z_mu, z_logVar, sim_scores = model(input, batch_id)
 
         recon_loss, kl_loss, cross_entropy, \
             ortho_loss, atomic_loss = model.loss_function(input, target, pred_y, px_mu,
@@ -188,20 +186,17 @@ def _test_model(model, dataloader, coefs):
     return test_acc, loss.item()
 
 
-
 def load_model(args, model, model_dir=None):
     '''
     Load model from model_dir
     '''
     if model_dir == None:
         model_dir = args.model_dir + args.exp_code + '.pth'
-        print(model_dir)
     model.load_state_dict(torch.load(model_dir))
     model.eval()
     # model = torch.load(model_dir)
     # model.eval()
     print("Model loaded")
-
 
 
 def get_predictions(model, X, test: bool):
@@ -232,7 +227,6 @@ def get_predictions(model, X, test: bool):
     return top2_pred, sim_scores
 
 
-
 def get_latent(model, X):
     input = torch.Tensor(X).to(device)
     latent = model.get_latent(input).cpu().detach().numpy()
@@ -240,11 +234,9 @@ def get_latent(model, X):
     return latent
 
 
-
 def get_prototypes(model):
     prototypes = model.prototype_vectors.cpu().detach().numpy()
     return prototypes
-
 
 
 def get_prototype_cells(model):

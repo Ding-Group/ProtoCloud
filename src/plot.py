@@ -115,6 +115,7 @@ def plot_confusion_matrix(args, target_names):
     print("Confusion matrix saved")
 
 
+
 def plot_umap_embedding(args, y, data):
     """
     Plot the umap embedding of the data, color and label based on y. Call matplotlib.pylot.show() after to display plot.
@@ -126,35 +127,62 @@ def plot_umap_embedding(args, y, data):
     """ 
     latent = load_file(args, '_latent.npy')
     proto = load_file(args, '_prototypes.npy')
+    predicted = load_file(args, '_pred.csv')
+    y = predicted['celltype']
+
 
     umap_kwargs = {'n_neighbors': 10, 'min_dist': 0.05}
 
-    # embedding = umap.UMAP(**umap_kwargs).fit_transform(latent)
     embedding = umap.UMAP(**umap_kwargs).fit_transform(np.concatenate((latent, proto), axis = 0))
     latent_embedding = embedding[:latent.shape[0], :]
     proto_embedding = embedding[latent.shape[0]:, :]
-    cell_labels = data.cell_encoder.classes_
+    
 
     f, ax = plt.subplots(1, figsize = (14, 10))
 
-    types = np.unique(y)
+    types = args.num_classes
     cmap = plt.cm.nipy_spectral
-    norm = plt.Normalize(np.min(types), np.max(types))
-    cell_color = cmap(norm(types)) if data.cell_color is None else data.cell_color
+    norm = plt.Normalize(0, types-1)
+    proto_color = [cmap(i) for i in np.linspace(0, 1, types)] if data.cell_color is None else data.cell_color
+    if args.model_data is None:
+        cell_color = proto_color
+    else:
+        cmap = plt.cm.nipy_spectral
+        cell_color = [cmap(i) for i in np.linspace(0, 1, len(np.unique(y)))]
 
     # plot latent embeddings
-    for type in types:
+    cell_labels = data.cell_encoder.classes_
+    for i, t in enumerate(np.unique(y)):
         ax.scatter(
-            *latent_embedding[type == y, :].T,
+            *latent_embedding[y == t, :].T,
             s=1, # point size
             alpha=0.5,
-            color =  cell_color[type],
-            label = cell_labels[type],
+            color = cell_color[i],  # color according to orig labels
+            label = cell_labels[i],
             )
-    for type in types:
-        count = args.prototypes_per_class*type
-        # plot prototype embeddings
-        for i in range(0,args.prototypes_per_class):
+        if args.model_data is not None:
+            x_center = np.mean(latent_embedding[y == t, 0])
+            y_center = np.mean(latent_embedding[y == t, 1])
+            ax.text(x_center*1.02, y_center*1.05,
+                    cell_labels[t], 
+                    color = cell_color[t],
+                    fontsize = 9,
+                    style = 'oblique', 
+                    horizontalalignment='center',
+                    verticalalignment='top',
+                    wrap=True,
+                    bbox=dict(boxstyle='round,pad=0.05', fc='w', lw=0, alpha=0.8),
+                    )
+    
+    # plot prototype embeddings
+    if args.model_data is not None:
+        model_encoder = joblib.load(os.path.dirname(args.pretrain_model_pth) + '/cell_encoder.joblib')
+        model_labels = model_encoder.classes_
+    else:
+        model_labels = data.cell_encoder.classes_
+    for t in range(types):
+        count = args.prototypes_per_class * t
+        for i in range(0, args.prototypes_per_class):
             ax.scatter(
                 *proto_embedding[count+i, :].T,
                 s=50,
@@ -162,15 +190,15 @@ def plot_umap_embedding(args, y, data):
                 edgecolors="k",
                 marker="o",
                 alpha=0.8,
-                color = cell_color[type],
+                color = proto_color[t],  # color according to orig labels
             )
         # add class label text at the center of each prototype embeddings
         x_center = np.mean(proto_embedding[count:count+i, 0])
         y_center = np.mean(proto_embedding[count:count+i, 1])
         ax.text(x_center*1.02, y_center*1.05,
-                cell_labels[type], 
-                color = cell_color[type],
-                fontsize = 8,
+                model_labels[t], 
+                color = proto_color[t],
+                fontsize = 12,
                 style = "italic", 
                 horizontalalignment='center',
                 verticalalignment='top',
@@ -216,85 +244,85 @@ def plot_protocorr_heatmap(args):
 
 
 
-def plot_misclassified_umap(args, data):
-    """
-    Plot the umap embedding of the data, color and label based on y. Call matplotlib.pylot.show() after to display plot.
-    args:
-        latent (np.array): The data that we are finding an embedding for, (n,d)
-        proto (np.array): The prototypes of the model, (k,d)
-        y (np.array): The labels of the data, (n,)
-        data (Data): The scRNAData object that contains the cell encoder and cell color
-    """ 
-    latent = load_file(args, '_latent.npy')
-    proto = load_file(args, '_prototypes.npy')
-    predictions = load_file(args, '_pred.csv')
-    umap_kwargs = {'n_neighbors': 10, 'min_dist': 0.05}
+# def plot_misclassified_umap(args, data):
+#     """
+#     Plot the umap embedding of the data, color and label based on y. Call matplotlib.pylot.show() after to display plot.
+#     args:
+#         latent (np.array): The data that we are finding an embedding for, (n,d)
+#         proto (np.array): The prototypes of the model, (k,d)
+#         y (np.array): The labels of the data, (n,)
+#         data (Data): The scRNAData object that contains the cell encoder and cell color
+#     """ 
+#     latent = load_file(args, '_latent.npy')
+#     proto = load_file(args, '_prototypes.npy')
+#     predictions = load_file(args, '_pred.csv')
+#     umap_kwargs = {'n_neighbors': 10, 'min_dist': 0.05}
 
-    # only plot those that are misclassified
-    actual_y = predictions['celltype']
-    pred1 = predictions['pred1']
-    pred2 = predictions['pred2']
+#     # only plot those that are misclassified
+#     actual_y = predictions['celltype']
+#     pred1 = predictions['pred1']
+#     pred2 = predictions['pred2']
 
-    latent = latent[actual_y != pred1]
+#     latent = latent[actual_y != pred1]
 
-    # embedding = umap.UMAP(**umap_kwargs).fit_transform(latent)
-    embedding = umap.UMAP(**umap_kwargs).fit_transform(np.concatenate((latent, proto), axis = 0))
-    latent_embedding = embedding[:latent.shape[0], :]
-    proto_embedding = embedding[latent.shape[0]:, :]
-    cell_labels = data.cell_encoder.classes_
+#     # embedding = umap.UMAP(**umap_kwargs).fit_transform(latent)
+#     embedding = umap.UMAP(**umap_kwargs).fit_transform(np.concatenate((latent, proto), axis = 0))
+#     latent_embedding = embedding[:latent.shape[0], :]
+#     proto_embedding = embedding[latent.shape[0]:, :]
+#     cell_labels = data.cell_encoder.classes_
 
-    f, ax = plt.subplots(1, figsize = (14, 10))
+#     f, ax = plt.subplots(1, figsize = (14, 10))
 
-    types = np.unique(actual_y)
-    cmap = plt.cm.nipy_spectral
-    norm = plt.Normalize(np.min(types), np.max(types))
-    cell_color = cmap(norm(types)) if data.cell_color is None else data.cell_color
+#     types = np.unique(actual_y)
+#     cmap = plt.cm.nipy_spectral
+#     norm = plt.Normalize(np.min(types), np.max(types))
+#     cell_color = cmap(norm(types)) if data.cell_color is None else data.cell_color
 
-    # plot latent embeddings
-    for type in types:
-        ax.scatter(
-            *latent_embedding[type == actual_y, :].T,
-            s=10, # point size
-            alpha=0.5,
-            color =  cell_color[type],
-            label = cell_labels[type],
-            )
-    for type in types:
-        count = args.prototypes_per_class*type
-        # plot prototype embeddings
-        for i in range(0,args.prototypes_per_class):
-            ax.scatter(
-                *proto_embedding[count+i, :].T,
-                s=50,
-                linewidth=0.7,
-                edgecolors="k",
-                marker="o",
-                alpha=0.8,
-                color = cell_color[type],
-            )
-        # add class label text at the center of each prototype embeddings
-        x_center = np.mean(proto_embedding[count:count+i, 0])
-        y_center = np.mean(proto_embedding[count:count+i, 1])
-        ax.text(x_center*1.02, y_center*1.05,
-                cell_labels[type], 
-                color = cell_color[type],
-                fontsize = 8,
-                style = "italic", 
-                horizontalalignment='center',
-                verticalalignment='top',
-                wrap=True,
-                bbox=dict(boxstyle='round,pad=0.05', fc='w', lw=0, alpha=0.8),
-                )
+#     # plot latent embeddings
+#     for type in types:
+#         ax.scatter(
+#             *latent_embedding[type == actual_y, :].T,
+#             s=10, # point size
+#             alpha=0.5,
+#             color =  cell_color[type],
+#             label = cell_labels[type],
+#             )
+#     for type in types:
+#         count = args.prototypes_per_class*type
+#         # plot prototype embeddings
+#         for i in range(0,args.prototypes_per_class):
+#             ax.scatter(
+#                 *proto_embedding[count+i, :].T,
+#                 s=50,
+#                 linewidth=0.7,
+#                 edgecolors="k",
+#                 marker="o",
+#                 alpha=0.8,
+#                 color = cell_color[type],
+#             )
+#         # add class label text at the center of each prototype embeddings
+#         x_center = np.mean(proto_embedding[count:count+i, 0])
+#         y_center = np.mean(proto_embedding[count:count+i, 1])
+#         ax.text(x_center*1.02, y_center*1.05,
+#                 cell_labels[type], 
+#                 color = cell_color[type],
+#                 fontsize = 8,
+#                 style = "italic", 
+#                 horizontalalignment='center',
+#                 verticalalignment='top',
+#                 wrap=True,
+#                 bbox=dict(boxstyle='round,pad=0.05', fc='w', lw=0, alpha=0.8),
+#                 )
         
-    title = " ".join([args.model, 'UMAP embedding on', args.dataset])
-    ax.set_title(title)
-    ax.legend(bbox_to_anchor=(1.04, 1), loc="upper left")
+#     title = " ".join([args.model, 'UMAP embedding on', args.dataset])
+#     ax.set_title(title)
+#     ax.legend(bbox_to_anchor=(1.04, 1), loc="upper left")
     
-    path = args.plot_dir + args.exp_code + '_umap.png'
-    plt.subplots_adjust(right=0.7)
-    plt.savefig(path, bbox_inches="tight")
-    plt.close()
-    print("UMAP embedding saved")
+#     path = args.plot_dir + args.exp_code + '_umap.png'
+#     plt.subplots_adjust(right=0.7)
+#     plt.savefig(path, bbox_inches="tight")
+#     plt.close()
+#     print("UMAP embedding saved")
 
 
 
@@ -442,8 +470,8 @@ def plot_marker_venn_diagram(adata, args):
     gene_names = adata.var['gene_name']
 
     # top DE genes
-    adata.uns['log1p']["base"] = None
     sc.pp.log1p(adata.layers["counts"])
+    adata.uns['log1p']["base"] = None
     sc.tl.rank_genes_groups(adata, groupby = 'celltype', use_raw = False, layer = 'counts', n_genes = 50, method = 'wilcoxon')
     top_de_genes = adata.uns['rank_genes_groups']['names']
 

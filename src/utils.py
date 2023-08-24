@@ -48,7 +48,7 @@ def save_model_dict(model_dict, model_path):
 
 
 def load_model_dict(model_path):
-    with open(model_path + 'model_dict.pkl', 'rb') as f:
+    with open(os.path.join(model_path, 'model_dict.pkl'), 'rb') as f:
         loaded_dict = pickle.load(f)
     return loaded_dict
 
@@ -71,9 +71,25 @@ def load_var_names(filename):
     import h5py
     
     with h5py.File(filename, 'r') as f:
-        var_names = [name.decode('utf-8') for name in f['var']['index']]
+        var_names = [name for name in f['var']['gene_name']]
     return var_names
 
+
+
+def ordered_class(data, args):
+    """
+    Return the ordered class index for the dataset.
+    For RGC: sorted by celltype number
+    Others: sorted by similiar celltypes
+    """
+    # if args.dataset == 'RGC':
+    #     # Sort by extracting the number at the beginning of each string
+    #     sorted_label = sorted(data.cell_encoder.classes_, key=lambda x: int(x.split('_')[0]))
+    #     sorted_index = data.cell_encoder.transform(sorted_label)
+    #     return sorted_index
+    # else:
+    #     return data.cell_encoder.transform(data.cell_encoder.classes_)
+    return data.cell_encoder.transform(data.cell_encoder.classes_)
 
 
 ### Model Settings
@@ -143,7 +159,7 @@ def save_model(model, model_dir, exp_code, accu=None, log=print):
 
     print('\tSaving model to {0}...'.format(save_path))
     torch.save(model.state_dict(), save_path)
-    # torch.save(model, save_path)
+    print('Model saved')
 
 
 def save_model_w_condition(model, model_dir, exp_code, accu, target_accu, log=print):
@@ -157,12 +173,7 @@ def save_model_w_condition(model, model_dir, exp_code, accu, target_accu, log=pr
         with open(os.path.join(model_dir,'saved_model.txt'), 'w') as f:
             f.write('Setting:' + exp_code + ", acc:{0:.4f}".format(accu))
         torch.save(model.state_dict(), save_path)
-        # torch.save(model, save_path)
-    
-        prototype_cells = model.get_prototype_cells().detach().cpu().numpy()
-        prototype_cells = (prototype_cells + 1) / 2.0     # scale to [0,1]
-        np.save(model_dir + "proto/" + exp_code+ '.npy', prototype_cells)
-        print("\tModel and prototypes saved")
+        print('Model saved')
 
     else:
         print('\tAccuracy below {0:.2f}%, model not saved'.format(target_accu * 100))
@@ -207,28 +218,12 @@ def model_metrics(predicted, label):
     pred_y = predicted['idx1']
     
     rep = classification_report(actual_y, pred_y, output_dict = True)
-    cm = confusion_matrix(actual_y, pred_y, labels=label)
+    cm = confusion_matrix(actual_y, pred_y, labels = label)
     if cm is None:
         raise Exception("Some error in generating confusion matrix")
     misclass_rate = 1 - accuracy_score(actual_y, pred_y)
     
     return misclass_rate, rep, cm
-
-
-def ordered_class(data, args):
-    """
-    Return the ordered class index for the dataset.
-    For RGC: sorted by celltype number
-    Others: sorted by similiar celltypes
-    """
-    # if args.dataset == 'RGC':
-    #     # Sort by extracting the number at the beginning of each string
-    #     sorted_label = sorted(data.cell_encoder.classes_, key=lambda x: int(x.split('_')[0]))
-    #     sorted_index = data.cell_encoder.transform(sorted_label)
-    #     return sorted_index
-    # else:
-    #     return data.cell_encoder.transform(data.cell_encoder.classes_)
-    return data.cell_encoder.transform(data.cell_encoder.classes_)
 
 
 
@@ -257,13 +252,13 @@ def save_file(results, args, file_ending, save_dir=None):
     elif isinstance(results, tuple):
         np.save(save_path, results)
     elif isinstance(results, LabelEncoder):   # save label encoder
-        joblib.dump(results, save_path)
+        joblib.dump(results, args.model_dir + file_ending)
     else:
         raise NotImplementedError("Data type not supported")
     # print("Saved results")
 
 
-def load_file(args, file_ending):
+def load_file(args, file_ending, path=None):
     file_path = args.results_dir + args.exp_code + file_ending
     try:
         if file_path.endswith('.csv'):
@@ -273,7 +268,7 @@ def load_file(args, file_ending):
         elif file_path.endswith('.h5ad'):
             return sc.read(file_path)
         elif file_path.endswith('.joblib'):     # load LabelEncoder
-            return joblib.load(file_path)
+            return joblib.load(args.model_dir + file_ending)
         else:
             raise NotImplementedError("File format not supported")
     except:
