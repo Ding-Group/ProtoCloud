@@ -12,7 +12,7 @@ EPS = glo.get_value('EPS')
 
 
 
-def form_block(in_dim, out_dim, use_bn = True, activation = 'relu', bias = True):
+def form_block(in_dim, out_dim, use_bn = True, activation = 'relu', bias = False):
     """
     Constructs a fully connected layer with bias, batch norm, and then leaky relu activation function
     args:
@@ -101,6 +101,7 @@ class protoCloud(nn.Module):
         self.decoder = nn.Sequential()
         for i, (in_dim, out_dim) in enumerate(zip(self.decoder_layer_sizes[:-1], self.decoder_layer_sizes[1:])):
             self.decoder.add_module(str(i), form_block(in_dim, out_dim, use_bn, activation))
+
         self.px_mean = nn.Linear(self.decoder_layer_sizes[-1], input_dim, bias = True)
 
         # likelihood
@@ -195,6 +196,7 @@ class protoCloud(nn.Module):
         # pairwise Euclidean distances between z and prototype vectors
         d = torch.cdist(z[:, :self.latent_dim // 2], 
                         self.prototype_vectors[:, :self.latent_dim // 2], p = 2)  ## Batch size x prototypes
+
         sim_scores = self.distance_2_similarity(d)
         return sim_scores
     
@@ -376,7 +378,7 @@ class protoCloud(nn.Module):
 
             elif isinstance(m, nn.BatchNorm1d):
                 nn.init.constant_(m.weight, 1)
-                nn.init.constant_(m.bias, 0)
+                nn.init.constant_(m.bias, 0.001)
 
         for m in self.decoder.modules():
             if isinstance(m, nn.Linear):
@@ -386,7 +388,7 @@ class protoCloud(nn.Module):
             
             elif isinstance(m, nn.BatchNorm1d):
                 nn.init.constant_(m.weight, 1)
-                nn.init.constant_(m.bias, 0)
+                nn.init.constant_(m.bias, 0.001)
 
         self.set_last_layer_incorrect_connection(incorrect_strength = -0.5)
 
