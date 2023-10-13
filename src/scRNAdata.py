@@ -8,7 +8,7 @@ import numpy as np
 import pandas as pd
 from scipy import sparse
 
-from torch.utils.data import Dataset, DataLoader, random_split
+from torch.utils.data import Dataset, DataLoader, random_split, WeightedRandomSampler
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelEncoder
 
@@ -48,7 +48,7 @@ class scRNAData():
             self.species = "human"
             if os.path.exists(self.save_path):
                 print('Loading dataset...')
-                self.adata = sc.read(self.save_path)
+                adata = sc.read(self.save_path)
             else:
                 # if data file does not exist, download, preprocess & save it
                 print('Preprocessing dataset...')
@@ -56,21 +56,31 @@ class scRNAData():
                     adata = sc.read(self.data_dir + 'pbmc10k.h5ad')
                 elif self.dataset_name == "PBMC_20K":
                     adata = sc.read(self.data_dir +  'pbmc20k.h5ad')
-                else:
+                elif self.dataset_name == "PBMC_30K":
                     adata = sc.read(self.data_dir +  'pbmc30k.h5ad')
                     adata.obs["celltype"] = adata.obs["CellType"].astype("category")
                     adata.var["gene_name"] = adata.var.index.tolist()
                     adata.obs['batch'] = [int(name.split("pbmc")[-1]) for name in adata.obs['Experiment'].tolist()]
+                elif self.dataset_name == "PBMC1":
+                    adata = sc.read(self.data_dir +  'pbmc1.h5ad')
+                    adata.obs["celltype"] = adata.obs["CellType"].astype("category")
+                    adata.var["gene_name"] = adata.var.index.tolist()
+                elif self.dataset_name == "PBMC2":
+                    adata = sc.read(self.data_dir +  'pbmc2.h5ad')
+                    adata.obs["celltype"] = adata.obs["CellType"].astype("category")
+                    adata.var["gene_name"] = adata.var.index.tolist()
+                else:
+                    raise ValueError("Dataset not found!")
                 # adata.obs["celltype"] = adata.obs["str_labels"].astype("category")
                 # adata.var = adata.var.set_index("gene_symbols")
                 # adata.var["gene_name"] = adata.var.index.tolist()
                 
-                self.adata = self._preprocess(adata,
+                adata = self._preprocess(adata,
                     filter_gene_by_counts = 500,
                     filter_cell_by_counts = 1000,
                     normalize_total = 1e4,
                     log1p = True)
-                self.adata.write(self.save_path, compression='gzip')
+                adata.write(self.save_path, compression='gzip')
 
             self.cell_color = None
 
@@ -78,7 +88,7 @@ class scRNAData():
             self.species = "human"
             if os.path.exists(self.save_path):
                 print('Loading dataset...')
-                self.adata = sc.read(self.save_path)
+                adata = sc.read(self.save_path)
             else:
                 # if data file does not exist, download, preprocess & save it
                 print('Downloading dataset...')
@@ -109,60 +119,79 @@ class scRNAData():
                 new_adata.uns = adata.uns.copy()
                 print("Recovered counts:", sum(np.sum(raw, axis = 1) == new_adata.obs['n_counts']))
 
-                self.adata = self._preprocess(new_adata,
+                adata = self._preprocess(new_adata,
                     filter_gene_by_counts = 500,
                     filter_cell_by_counts = 1000,
                     normalize_total = 1e4,
                     log1p = True)
-                self.adata.write(self.save_path, compression='gzip')
+                adata.write(self.save_path, compression='gzip')
             # get color for umap
-            # self.cell_color = self.adata.uns["Celltypes_updated_July_2020_colors"]
+            # self.cell_color = adata.uns["Celltypes_updated_July_2020_colors"]
             self.cell_color = None
         
         elif self.dataset_name == "RGC":
             self.species = "mouse"
             if os.path.exists(self.save_path):
                 print('Loading dataset...')
-                self.adata = sc.read(self.save_path)
+                adata = sc.read(self.save_path)
             else:
-                adata = sc.read(self.data_dir + 'rgc.h5ad')
+                print('Preprocessing dataset...')
+                adata = sc.read(self.data_dir + 'rgc_atlas.h5ad')
                 adata.obs["celltype"] = adata.obs['Type']
                 adata.var["gene_name"] = adata.var.index
                 adata.obs['batch'] = [int(name.split("Batch")[-1]) for name in adata.obs['Batch'].tolist()]
 
-                self.adata = self._preprocess(adata,
+                adata = self._preprocess(adata,
                     filter_gene_by_counts = 500,
                     filter_cell_by_counts = 1000,
                     normalize_total = 1e4,
                     log1p = True)
-                self.adata.write(self.save_path, compression='gzip')
+                adata.write(self.save_path, compression='gzip')
             self.cell_color = None
         
         elif self.dataset_name.endswith("ONC"):
             self.species = "mouse"
             if os.path.exists(self.save_path):
                 print('Loading dataset...')
-                self.adata = sc.read(self.save_path)
+                adata = sc.read(self.save_path)
             else:
+                print('Preprocessing dataset...')
                 adata = sc.read(self.data_dir + self.dataset_name.lower() + '.h5ad')
                 adata.obs["celltype"] = adata.obs['Type']
                 adata.var["gene_name"] = adata.var.index
                 adata.obs['batch'] = [int(name.split("Batch")[-1]) for name in adata.obs['Batch'].tolist()]
 
-                self.adata = self._preprocess(adata,
+                adata = self._preprocess(adata,
+                    filter_gene_by_counts = False,
+                    filter_cell_by_counts = False,
+                    normalize_total = 1e4,
+                    log1p = True)
+                adata.write(self.save_path, compression='gzip')
+            self.cell_color = None
+        
+        elif self.dataset_name == "ICA":
+            self.species = "human"
+            if os.path.exists(self.save_path):
+                print('Loading dataset...')
+                adata = sc.read(self.save_path)
+            else:
+                print('Preprocessing dataset...')
+                adata = sc.read(self.data_dir + self.dataset_name.lower() + '.h5ad')
+                adata.var["gene_name"] = adata.var.index
+                
+                adata = self._preprocess(adata,
                     filter_gene_by_counts = 500,
                     filter_cell_by_counts = 1000,
                     normalize_total = 1e4,
                     log1p = True)
-                self.adata.write(self.save_path, compression='gzip')
+                adata.write(self.save_path, compression='gzip')
             self.cell_color = None
-
         
         elif self.dataset_name == "SM3":
             self.species = "human"
             if os.path.exists(self.save_path):
                 print('Loading dataset...')
-                self.adata = sc.read(self.save_path)
+                adata = sc.read(self.save_path)
             else:
                 adata = sc.read(self.data_dir + 'SM3_full.h5ad').T
 
@@ -173,19 +202,19 @@ class scRNAData():
                 adata.obs['celltype'] = adata.obs['celltype_lvl2_inex_10khvg_reads_res08_new'].tolist()
                 adata.var["gene_name"] = adata.var.index.tolist()
 
-                self.adata = self._preprocess(adata,
+                adata = self._preprocess(adata,
                     filter_gene_by_counts = 500,
                     filter_cell_by_counts = 1000,
                     normalize_total = 1e4,
                     log1p = True)
-                self.adata.write(self.save_path, compression='gzip')
+                adata.write(self.save_path, compression='gzip')
             self.cell_color = None
 
         elif self.dataset_name == "GCA":
             self.species = "human"
             if os.path.exists(self.save_path):
                 print('Loading dataset...')
-                self.adata = sc.read(self.save_path)
+                adata = sc.read(self.save_path)
             else:
                 # if data file does not exist, download, preprocess & save it
                 adata = sc.read(self.data_dir +'gutcellatlas.h5ad',
@@ -194,61 +223,92 @@ class scRNAData():
                 adata.obs["celltype"] = adata.obs['category'].astype("category")
                 adata.var["gene_name"] = adata.var.index.tolist()
 
-                self.adata = self._preprocess(adata,
+                adata = self._preprocess(adata,
                     filter_gene_by_counts = 500,
                     filter_cell_by_counts = 1000,
                     normalize_total = 1e4,
                     log1p = True,
                     top_n_genes = self.topngene)
                 
-                self.adata.write(self.save_path, compression = 'gzip')
+                adata.write(self.save_path, compression = 'gzip')
             self.cell_color = None
         
         elif self.dataset_name == "TS_spleen":
             self.species = "human"
             if os.path.exists(self.save_path):
                 print('Loading dataset...')
-                self.adata = sc.read(self.save_path)
+                adata = sc.read(self.save_path)
             else:
                 adata = sc.read(self.data_dir + 'new_spleen.h5ad')
-                self.adata = self._preprocess(adata,
+                adata = self._preprocess(adata,
                     filter_gene_by_counts = 500,
                     filter_cell_by_counts = 1000,
                     normalize_total = 1e4,
                     log1p = True,
                     )
-                self.adata.write(self.save_path, compression='gzip')
+                adata.write(self.save_path, compression='gzip')
             self.cell_color = None
 
+        elif self.dataset_name.startswith("ATAC"):
+            self.species = "human"
+            if os.path.exists(self.save_path):
+                print('Loading dataset...')
+                adata = sc.read(self.save_path)
+            else:
+                print('Preprocessing dataset...')
+                adata = sc.read(self.data_dir + self.dataset_name + '.h5ad')
+
+                # only for top_n_genes, assume X is raw
+                adata = self._preprocess(adata,
+                        filter_gene_by_counts = False,
+                        filter_cell_by_counts = False,
+                        normalize_total = 1e4,
+                        log1p = True)
+                adata.X = adata.layers['counts']
+                del adata.layers
+                # adata.write(self.save_path, compression='gzip')
+        
+        elif os.path.exists(self.save_path):
+            # load un-predefined datasets
+            print('Loading outside dataset, this will not process the data')
+            adata = sc.read(self.save_path)
+            assert 'celltype' in adata.obs.columns, "The 'celltype' column is NOT present in adata.obs."
+            assert 'gene_name' in adata.var.columns, "The 'gene_name' column is NOT present in adata.var."
+
         else:
+            print(self.save_path)
             raise ValueError("Dataset not found!")
         
 
+        #######################################################
+        self.adata = adata[~adata.obs['celltype'].isna(), :]
+        del adata
         print(self.adata)
         # self.adata.uns['log1p']["base"] = None
-        if self.raw:
-            print("\tUsing raw counts as input")
-            self.X = self.adata.layers['counts']
-        else:
-            self.X = self.adata.X
-        self.X = np.float32(self.X.toarray() if sparse.isspmatrix(self.X) else self.X)
-
         self.gene_names = self.adata.var["gene_name"].tolist()
-        self.celltypes = self.adata.obs["celltype"].tolist()
-        # self.celltypes = self.adata.obs["Curated_annotation"].tolist()
+
+        if self.raw and 'counts' in self.adata.layers:
+            print("\tUsing layer 'counts' as input")
+            self.X = np.float32(np.array(self.adata.layers['counts'].todense()) if sparse.isspmatrix(self.adata.layers['counts']) else self.adata.layers['counts'])
+        else:
+            print("\tUsing adata.X as input")
+            self.X = np.float32(np.array(self.adata.X.todense()) if sparse.isspmatrix(self.adata.X) else self.adata.X)
+        print(type(self.X))
+        print(self.X.dtype)
+
+        # if self.dataset_name == "TSCA_spleen":
+        #     celltypes = self.adata.obs["Curated_annotation"]
+        # else:
+        celltypes = self.adata.obs["celltype"]
+        _, self.cell_encoder = self._label_encoder(np.unique(celltypes))
+        self.Y = self.cell_encoder.transform(celltypes)
 
         if 'batch' in self.adata.obs_names:
             self.batch = self.adata.obs['batch'].tolist()
             self.n_batch = np.unique(self.batch)
         else:
             self.n_batch = 1
-            self.batch = np.ones(len(self.celltypes))
-        
-        self.Y, self.cell_encoder = self._label_encoder(self.celltypes)
-    
-
-    def all_data(self):
-        return (self.X, self.Y, self.gene_names, self.cell_encoder)
+            self.batch = np.ones(len(self.Y))
 
 
     def split_data(self, args):
@@ -272,10 +332,56 @@ class scRNAData():
         test_X = self.X[test_idx]
         train_Y = self.Y[train_idx]
         test_Y = self.Y[test_idx]
-        train_b = self.batch[train_idx]
-        test_b = self.batch[test_idx]
-        return (train_X, test_X, train_Y, test_Y, train_b, test_b)
-    
+        # train_b = self.batch[train_idx]
+        # test_b = self.batch[test_idx]
+
+        if args.data_balance:
+            train_X, train_Y = self.augment_rares(train_X, train_Y)
+        for c in np.unique(train_Y):
+            portion = np.sum(train_Y == c) / train_Y.shape[0]
+            print(self.cell_encoder.inverse_transform([c]), "%.3f"%portion)
+
+        return (train_X, test_X, train_Y, test_Y)
+                #, train_b, test_b)
+
+
+    def augment_rares(self, X, Y):
+        print("\tAugmenting rare cell types")
+        avg_p = 1 / len(np.unique(Y))
+        # avg_p = 0.06 if avg_p >= 0.1 else avg_p
+        min_type_num = int(avg_p * X.shape[0])
+
+        rares = []
+        num_sample = 0
+        for c in np.unique(Y):
+            num_cells = np.sum(Y == c)
+            if num_cells < min_type_num:
+                num_sample += min_type_num - num_cells
+                rares.append(c)
+        print("Rare cell types:", len(rares))
+
+        new_X = torch.zeros((X.shape[0] + num_sample, X.shape[1]))
+        new_Y = torch.zeros(Y.shape[0] + num_sample, dtype=int)
+        new_X[:X.shape[0]] = torch.from_numpy(X)
+        new_Y[:Y.shape[0]] = torch.from_numpy(Y)
+
+        start_idx = X.shape[0]
+        for c in rares:
+            rare = X[Y == c]
+            num_sample = min_type_num - np.sum(Y == c)
+            rates = torch.from_numpy(rare / 1)
+            rates[rates == 0] = 0.01
+            rates = rates[np.random.choice(rates.shape[0], num_sample)]
+            # print(rates.shape)
+            new_X[start_idx : start_idx + num_sample, :] = torch.poisson(rates)
+            new_Y[start_idx : start_idx + num_sample] = torch.full((1, num_sample), c)
+            start_idx += num_sample
+            del rare, rates
+        new_X = new_X.numpy()
+        new_Y = new_Y.numpy()
+        print(type(new_X), type(new_Y))
+        return new_X, new_Y
+
 
     def _special_train_test(self, obs_name, time_point):
         # Convert time_point to its corresponding categorical code
@@ -294,11 +400,16 @@ class scRNAData():
         return train_indexes, sub_test
 
 
-    def assign_dataloader(self, X, Y, batch, batch_size):
-        dataset = CustomDataset(X, Y, batch)
+    def assign_dataloader(self, X, Y, batch_size, batch=None):
+        if batch is not None:
+            dataset = CustomDataset(X, Y, batch)
+        else:
+            dataset = torch.utils.data.TensorDataset(torch.Tensor(X),
+                                            torch.LongTensor(Y))
+
         data_loader = torch.utils.data.DataLoader(dataset,
             batch_size = batch_size,
-            shuffle = True,
+            shuffle = True,   # sampler mutually exclusive with shuffle
             drop_last = True,
         )
         return data_loader
@@ -315,7 +426,7 @@ class scRNAData():
 
 
     def _preprocess(self, adata,
-                    filter_gene_by_counts = 3,  # step 1
+                    filter_gene_by_counts = False,  # step 1
                     filter_cell_by_counts = False,  # step 2
                     normalize_total = 1e4,  # 3. whether to normalize the raw data and to what sum
                     log1p = True,  # 4. whether to log1p the normalized data
@@ -339,15 +450,6 @@ class scRNAData():
                 min_counts = filter_cell_by_counts
             )
         
-        # select top n genes
-        if isinstance(self.topngene, int):
-            print("Selecting top %d genes ..." %self.topngene)
-            sc.pp.highly_variable_genes(adata, 
-                                        n_top_genes = self.topngene,
-                                        flavor = 'cell_ranger',
-            )
-            adata = adata[:, adata.var['highly_variable']]
-        
         # Save raw counts
         adata.layers["counts"] = adata.X.copy()
 
@@ -363,7 +465,20 @@ class scRNAData():
         if log1p:
             print("Log1p transforming ...")
             sc.pp.log1p(adata)
+
+        # select top n genes
+        if isinstance(self.topngene, int):
+            adata = self._top_n_genes(adata)
         
+        return adata
+    
+    def _top_n_genes(self, adata):
+        print("Selecting top %d genes ..." %self.topngene)
+        sc.pp.highly_variable_genes(adata, 
+                                    n_top_genes = self.topngene,
+                                    flavor = 'cell_ranger',
+        )
+        adata = adata[:, adata.var['highly_variable']]
         return adata
 
 
@@ -409,15 +524,26 @@ class scRNAData():
         return celltype_mean
     
 
-    def gene_subset(self, model_dataname):
+    def gene_subset(self, pretrain_model_pth, args):
         """
         load the pretrained model genes and resize the data
         """
+        model_dir = os.path.dirname(pretrain_model_pth)
+        model_dataname = os.path.basename(pretrain_model_pth)
+        model_dataname = "_".join(model_dataname.split("_")[4:])[:-4]
+
+        args.model_data = model_dataname
+        print("Use genes as: ", model_dataname)
+
         # load model used gene_names
-        fpath = self.data_dir + model_dataname + '.h5ad'
-        print("load gene names from:", fpath)
-        model_genes = load_var_names(fpath)
-        print("number of genes used in loaded model: ", len(model_genes))
+        try:
+            print("load saved gene names from:", model_dir)
+            model_genes = data_info_loader('gene_names', model_dir)
+        except FileNotFoundError:
+            fpath = self.data_dir + model_dataname + '.h5ad'
+            print("load gene names from:", fpath)
+            model_genes = load_var_names(fpath)
+        print("number of genes in loaded model: ", len(model_genes))
 
         # get shared genes
         import collections
@@ -426,36 +552,64 @@ class scRNAData():
         print("\tShared genes in new dataset: %.2f%%"%(len(share_genes)/len(self.gene_names)*100))
         gene_mask = [True if i in share_genes else False for i in model_genes]
         var_indices = [self.adata.var_names.get_loc(gene) for gene in share_genes]
+        
 
-        # build new data object
-        test_X = torch.zeros(self.adata.X.shape[0], len(model_genes))
+        # build new data object     
+        test_X = torch.zeros(self.X.shape[0], len(model_genes))
         test_X[:, np.where(gene_mask)[0]] = torch.Tensor(self.X[:, var_indices])
-
         adata = anndata.AnnData(X = test_X.numpy())
+
         adata.obs = self.adata.obs.copy()
-        adata.obs["celltype"] = adata.obs["celltype"].astype("category")
         adata.var['gene_name']  = model_genes
         adata.var.index = adata.var['gene_name']
 
         self.adata = adata
-        self.X = test_X
-        self.gene_names = self.adata.var["gene_name"]
+        self.X = self.adata.X
+        # self.X = np.float32(self.X.toarray() if sparse.isspmatrix(self.X) else self.X)
+        self.gene_names = self.adata.var["gene_name"].tolist()
 
-        return self.X
+
+    def use_pred_label(self, args):
+        try:
+            predicted = load_file(args, '_pred.csv')
+        except FileNotFoundError:
+            raise FileNotFoundError("Apply the model for prediction first")
+        
+        # only pred label with prob >= 0.6
+        prob = predicted['prob1'].values
+        prob_mask = [(i >= 0.6 and orig != "Unassigned") for i, orig in zip(prob, self.adata.obs["celltype"])]
+        predicted = predicted[prob_mask]
+
+        self.adata = self.adata[prob_mask, :]
+        self.X = self.adata.X
+        self.cell_encoder = data_info_loader('cell_encoder', os.path.dirname(args.pretrain_model_pth))
+        self.Y = self.cell_encoder.transform(predicted['idx1'].values)
+        print(self.cell_encoder.classes_)
+        print("Using predicted label from pretrained model")
 
 
 
 class CustomDataset(Dataset):
     def __init__(self, x, y, batch):
-        # self.x = torch.Tensor(x)
-        # self.y = torch.LongTensor(y)
-        # self.batch = torch.LongTensor(batch)
-        self.x = x
-        self.y = y
-        self.batch = batch
+        self.x = torch.Tensor(x)
+        self.y = torch.LongTensor(y)
+        self.batch = torch.LongTensor(batch)
+        # self.x = x
+        # self.y = y
+        # self.batch = batch
 
     def __len__(self):
         return len(self.x)
 
     def __getitem__(self, index):
         return self.x[index], self.y[index], self.batch[index]
+    # def __getitem__(self, index):
+    #     try:
+    #         return self.x[index], self.y[index], self.batch[index]
+    #     except KeyError as e:
+    #         print(f"KeyError: {e}")
+    #         print(f"Index {index} does not exist.")
+    #         print(f"Length of x: {len(self.x)}, Length of y: {len(self.y)}, Length of batch: {len(self.batch)}")
+    #         raise
+
+

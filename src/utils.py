@@ -57,7 +57,7 @@ def load_model_dict(model_path):
 ### data processing
 #######################################################
 def one_hot_encoder(target, n_cls):
-    assert torch.max(target).item() < n_cls
+    assert torch.max(target).item() <= n_cls
 
     target = target.view(-1, 1)
     onehot = torch.zeros(target.size(0), n_cls)
@@ -71,7 +71,7 @@ def load_var_names(filename):
     import h5py
     
     with h5py.File(filename, 'r') as f:
-        var_names = [name for name in f['var']['gene_name']]
+        var_names = [name.decode('utf-8') for name in f['var']['gene_name']]
     return var_names
 
 
@@ -90,6 +90,30 @@ def ordered_class(data, args):
     # else:
     #     return data.cell_encoder.transform(data.cell_encoder.classes_)
     return data.cell_encoder.transform(data.cell_encoder.classes_)
+
+
+def data_info_saver(info, args, file_name):
+    # save model-relate data info for reuse
+    if file_name == 'cell_encoder':   # save label encoder
+        joblib.dump(info, os.path.join(args.model_dir, 'cell_encoder.joblib'))
+    elif file_name == 'gene_names':
+        with open(os.path.join(args.model_dir, 'gene_names.txt'), 'w') as f:
+            for gene in info:
+                f.write(f"{gene}\n")
+    else:
+        raise NotImplementedError()
+
+
+def data_info_loader(file_name, model_dir):
+    if file_name == 'cell_encoder':     # load LabelEncoder
+        return joblib.load(os.path.join(model_dir, 'cell_encoder.joblib'))
+    elif file_name == 'gene_names':
+        with open(os.path.join(model_dir, 'gene_names.txt'), 'r') as f:
+            gene_names = [line.strip() for line in f.readlines()]
+        return gene_names
+    else:
+        raise NotImplementedError()
+
 
 
 ### Model Settings
@@ -131,6 +155,9 @@ def log_likelihood_nb(x, mu, theta, eps = EPS):
     ll = torch.lgamma(x + theta) - torch.lgamma(theta) - torch.lgamma(x + 1) \
         + theta * (torch.log(theta + eps) - log_mu_theta) \
         + x * (torch.log(mu + eps) - log_mu_theta)
+
+    del log_mu_theta
+    torch.cuda.empty_cache()
 
     return ll
 
@@ -182,13 +209,13 @@ def save_model_w_condition(model, model_dir, exp_code, accu, target_accu, log=pr
 def save_prototype_cells(model, result_dir, exp_code):
     prototype_cells = model.get_prototype_cells().detach().cpu().numpy()
     prototype_cells = (prototype_cells + 1) / 2.0     # scale to [0,1]
-    protoCell_dir = result_dir + exp_code +'_protoCells.npy'
+    protoCell_dir = os.path.join(result_dir, exp_code + '_protoCells.npy')
 
     np.save(protoCell_dir, prototype_cells)
     print("\tPrototypes saved")
 
 
-def print_results(epoch, acc, loss, recon=None, kl=None, ce=None, ortho=None, atomic=None, is_train=True):
+def print_results(epoch, acc, loss=None, recon=None, kl=None, ce=None, ortho=None, atomic=None, is_train=True):
     if is_train:
         print('Train epoch: {0}'.format(epoch),
             '\taccu: {0}%'.format(acc * 100),
@@ -201,12 +228,11 @@ def print_results(epoch, acc, loss, recon=None, kl=None, ce=None, ortho=None, at
             )
     else:
         print('Valid epoch: {0}'.format(epoch),
-            '\taccu: {0}%'.format(acc * 100),
-            '\ttotal loss: {0}'.format(loss),
+            '\taccu: {0}%'.format(acc * 100)
             )
 
 
-def model_metrics(predicted, label):
+def model_metrics(predicted):
     """
     Evaluate the prediction results. 
     Returns the error rate, a testing report, and a confusion matrix of the results.
@@ -214,14 +240,17 @@ def model_metrics(predicted, label):
         predicted: (pd.DataFrame) DataFrame containing actual and predicted labels
                 col_names: 'celltype', 'prob1', 'prob2', 'idx1', 'idx2'
     """
-    actual_y = predicted['celltype']
+    orig_y = predicted['celltype']
     pred_y = predicted['idx1']
-    
-    rep = classification_report(actual_y, pred_y, output_dict = True)
-    cm = confusion_matrix(actual_y, pred_y, labels = label)
+
+    rep = classification_report(orig_y, pred_y, output_dict = True)
+
+    unique_elements = np.unique(np.concatenate((orig_y, pred_y)))
+    cm = confusion_matrix(orig_y, pred_y, labels=unique_elements)
+    # cm = confusion_matrix(orig_y, pred_y)
     if cm is None:
         raise Exception("Some error in generating confusion matrix")
-    misclass_rate = 1 - accuracy_score(actual_y, pred_y)
+    misclass_rate = 1 - accuracy_score(orig_y, pred_y)
     
     return misclass_rate, rep, cm
 
@@ -239,7 +268,7 @@ def save_file(results, args, file_ending, save_dir=None):
             OR (tuple) (misclass_rate, rep, cm)
     """
     if save_dir is None:
-        save_path = args.results_dir + args.exp_code + file_ending
+        save_path = os.path.join(args.results_dir, args.exp_code + file_ending)
     else:
         save_path = save_dir + args.exp_code + file_ending
 
@@ -251,15 +280,13 @@ def save_file(results, args, file_ending, save_dir=None):
         np.save(save_path, results)
     elif isinstance(results, tuple):
         np.save(save_path, results)
-    elif isinstance(results, LabelEncoder):   # save label encoder
-        joblib.dump(results, args.model_dir + file_ending)
     else:
         raise NotImplementedError("Data type not supported")
     # print("Saved results")
 
 
 def load_file(args, file_ending, path=None):
-    file_path = args.results_dir + args.exp_code + file_ending
+    file_path = os.path.join(args.results_dir, args.exp_code + file_ending)
     try:
         if file_path.endswith('.csv'):
             return pd.read_csv(file_path)
@@ -267,8 +294,6 @@ def load_file(args, file_ending, path=None):
             return np.load(file_path, allow_pickle = True)
         elif file_path.endswith('.h5ad'):
             return sc.read(file_path)
-        elif file_path.endswith('.joblib'):     # load LabelEncoder
-            return joblib.load(args.model_dir + file_ending)
         else:
             raise NotImplementedError("File format not supported")
     except:

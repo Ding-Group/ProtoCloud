@@ -10,9 +10,14 @@ device = 'cuda' if torch.cuda.is_available() else 'cpu'
 num_workers = 4 if torch.cuda.is_available() else 0
 
 
-def run_model(model, train_loader, test_loader, args):
+def run_model(model, train_loader, test_loader, 
+            epochs, 
+            lr = 1e-3, 
+            optimizer = "AdamW",
+            two_step = True,
+            ortho_coef = 0.3,
+            ):
     # setup optimizer
-    lr = args.lr
     optimizer_specs = \
             [# layers
              {'params': model.encoder.parameters(), 'lr': lr, 'weight_decay': 0.005},
@@ -27,31 +32,30 @@ def run_model(model, train_loader, test_loader, args):
              {'params': model.scale, 'lr': lr * 0.8, 'weight_decay': 0.005},
              {'params': model.theta, 'lr': lr * 0.8, 'weight_decay': 0.005},
              ]
-    if args.optimizer == 'Adam':
+    if optimizer == 'Adam':
         optimizer = torch.optim.Adam(optimizer_specs)
-    elif args.optimizer == 'AdamW':
-        optimizer = torch.optim.AdamW(optimizer_specs, eps = EPS)
+    elif optimizer == 'AdamW':
+        optimizer = torch.optim.AdamW(optimizer_specs, eps = 1e-16)
     else:
         raise NotImplementedError
     
-    obs_dist = model.obs_dist
-    nb_dispersion = model.nb_dispersion
-    # nb_dispersion = 'celltype'
     
-    # setup loss coef   
-    coefs = {'crs_ent': 1, 'recon': 1,
-                'kl': 1, 'ortho': 0.0, 'atomic': 0.0}
+    # setup loss coef  
+    two_step_training = two_step
+    coefs = {'crs_ent': 1, 'recon': 0.8, 'kl': 1, 
+            'ortho': 0.0 if two_step_training else 1,
+            'atomic': 0.0 if two_step_training else 1,
+            }
     print('loss coef:', coefs)
 
 
     # train
-    two_step_training = args.two_step
-
     print('Start training')
+    start_time = time.time()
     train_loss_list = []
     train_acc_list = []
     valid_acc_list = []
-    for epoch in range(args.epochs+1):
+    for epoch in range(epochs+1):
         train_acc, train_loss, train_recon, train_kl, \
             train_ce, train_ortho, train_atomic = _train_model(model = model, 
                                                                dataloader = train_loader,
@@ -59,9 +63,10 @@ def run_model(model, train_loader, test_loader, args):
                                                                coefs = coefs,
                                                                )
         # two-stage training: add ortho loss in the second half of training
-        if two_step_training and epoch == args.epochs // 2:
-            coefs['ortho'] = args.ortho_coef
-            coefs['atomic'] = 1
+        if two_step_training:
+            if epoch == epochs // 2:
+                coefs['ortho'] = ortho_coef
+                coefs['atomic'] = 1
 
         
         if (epoch % 10 == 0):
@@ -70,16 +75,19 @@ def run_model(model, train_loader, test_loader, args):
 
             
             # validate
-            test_acc, val_loss = _test_model(model = model, 
-                                         dataloader = test_loader,
-                                         coefs = coefs,
-                                         )
-            print_results(epoch, test_acc, val_loss, is_train = False)
+            test_acc = _test_model(model = model, 
+                                dataloader = test_loader,
+                                coefs = coefs,
+                                )
+            print_results(epoch, test_acc, is_train = False)
         train_loss_list.append(train_loss)
         train_acc_list.append(train_acc)
         valid_acc_list.append(test_acc)
     
+    end_time = time.time()
     print('\nFinished training')
+    total_time = end_time - start_time
+    print(f"Total training time: {total_time:.2f} seconds")
 
     return train_loss_list, train_acc_list, valid_acc_list
 
@@ -98,7 +106,7 @@ def _train_model(model, dataloader, optimizer, coefs):
     total_orth_loss = 0
     total_atomic_loss = 0
 
-    for i, (sample, label, b) in enumerate(dataloader):
+    for i, (sample, label) in enumerate(dataloader):
         input = sample.to(device)
         target = label.to(device)
         # batch_id = b.to(device)
@@ -155,7 +163,7 @@ def _test_model(model, dataloader, coefs):
     n_examples = len(dataloader.dataset)
     n_correct = 0
 
-    for i, (sample, label, b) in enumerate(dataloader):
+    for i, (sample, label) in enumerate(dataloader):
         input = sample.to(device)
         target = label.to(device)
         # batch_id = b.to(device)
@@ -163,35 +171,38 @@ def _test_model(model, dataloader, coefs):
         pred_y, px_mu, px_theta, z_mu, z_logVar, sim_scores = model(input)
         # pred_y, px_mu, px_theta, z_mu, z_logVar, sim_scores = model(input, batch_id)
 
-        recon_loss, kl_loss, cross_entropy, \
-            ortho_loss, atomic_loss = model.loss_function(input, target, pred_y, px_mu,
-                                                         px_theta, z_mu, z_logVar, sim_scores)
+        # recon_loss, kl_loss, cross_entropy, \
+        #     ortho_loss, atomic_loss = model.loss_function(input, target, pred_y, px_mu,
+        #                                                  px_theta, z_mu, z_logVar, sim_scores)
 
         # get prediction
         _, predicted = torch.max(pred_y.data, 1)
         n_correct += (predicted == target).sum().item()
 
-        # compute gradient and do SGD step
-        loss = (coefs['crs_ent'] * cross_entropy
-                    + coefs['recon'] * recon_loss
-                    + coefs['kl'] * kl_loss
-                    + coefs['ortho'] * ortho_loss
-                    + coefs['atomic'] * atomic_loss
-                )
+        # # compute loss
+        # loss = (coefs['crs_ent'] * cross_entropy
+        #             + coefs['recon'] * recon_loss
+        #             + coefs['kl'] * kl_loss
+        #             + coefs['ortho'] * ortho_loss
+        #             + coefs['atomic'] * atomic_loss
+        #         )
 
         del input, target, pred_y, predicted, px_mu, px_theta
         torch.cuda.empty_cache()
 
     test_acc = n_correct / n_examples
-    return test_acc, loss.item()
+    return test_acc#, loss.item()
 
 
-def load_model(args, model, model_dir=None):
+def freeze_modules():
+    for param in model.parameters():
+        param.requires_grad = False
+
+
+def load_model(model_dir, model):
     '''
     Load model from model_dir
     '''
-    if model_dir == None:
-        model_dir = args.model_dir + args.exp_code + '.pth'
     model.load_state_dict(torch.load(model_dir))
     model.eval()
     # model = torch.load(model_dir)
@@ -232,6 +243,13 @@ def get_latent(model, X):
     latent = model.get_latent(input).cpu().detach().numpy()
     del input
     return latent
+
+
+def get_recon(model, X):
+    input = torch.Tensor(X).to(device)
+    recon = model.get_recon(input).cpu().detach().numpy()
+    del input
+    return recon
 
 
 def get_prototypes(model):

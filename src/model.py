@@ -1,3 +1,4 @@
+from typing import Optional
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -11,15 +12,17 @@ num_workers = 4 if torch.cuda.is_available() else 0
 EPS = glo.get_value('EPS')
 
 
-
-def form_block(in_dim, out_dim, use_bn = True, activation = 'relu', bias = True):
+def form_block(in_dim, out_dim,
+                use_bn = True, activation = 'relu',
+                bias = False, dropout = 0,
+                ):
     """
     Constructs a fully connected layer with bias, batch norm, and then leaky relu activation function
     args:
         in_dim (int): input dimension
         out_dim (int): output dimension
         batch_norm (bool): use the batch norm in the layers, defaults to True
-        bias (bool): add a bias to the layers, defaults to True
+        bias (bool): add bias to the layers
     returns (array): the layers specified
     """
     layers = [nn.Linear(in_dim, out_dim, bias=bias)]
@@ -32,22 +35,26 @@ def form_block(in_dim, out_dim, use_bn = True, activation = 'relu', bias = True)
         layers.append(nn.LeakyReLU())
     else:
         raise ValueError('activation not recognized')
+    if dropout != 0:
+        layers.append(nn.Dropout(dropout))
     
     return nn.Sequential(*layers)
 
     
 class protoCloud(nn.Module):
-    def __init__(self, input_dim,
-                 num_prototypes, 
-                 num_classes,  
-                 latent_dim, 
-                 raw_input, 
-                 encoder_layer_sizes = None,
-                 decoder_layer_sizes = None,
-                 activation = 'relu', 
-                 use_bn = True,
+    def __init__(self, input_dim:int,
+                 num_prototypes:int, 
+                 num_classes:int,  
+                 latent_dim:int, 
+                 raw_input:int, 
+                 encoder_layer_sizes: Optional[list] = None,
+                 decoder_layer_sizes: Optional[list] = None,
+                 activation:str = 'relu', 
+                 use_bias:bool = False,
+                 use_dropout = 0,
+                 use_bn:bool = True,
                  obs_dist = 'nb',
-                 nb_dispersion = "celltype",
+                 nb_dispersion:str = "celltype_pred",
                 #  n_batch = 1,
                  ):
         super(protoCloud, self).__init__()
@@ -58,10 +65,14 @@ class protoCloud(nn.Module):
         self.raw_input = raw_input
         self.activation = activation
         self.use_bn = use_bn
+        self.use_bias = bool(use_bias)
+        self.use_dropout = use_dropout
         self.obs_dist = None if not self.raw_input else obs_dist
         self.nb_dispersion = nb_dispersion
         self.epsilon = EPS
         # self.n_batch = n_batch
+
+        assert self.nb_dispersion in ['celltype_target', 'celltype_pred', 'gene']
 
 
         # prototype-class labeled matrix
@@ -79,20 +90,21 @@ class protoCloud(nn.Module):
 
         #######################################################
         if encoder_layer_sizes is None:
-            self.encoder_layer_sizes = [self.input_dim, 128, 64, 32]
+            self.encoder_layer_sizes = [self.input_dim] + [128, 64, 32]
         else:
-            self.encoder_layer_sizes = encoder_layer_sizes
+            self.encoder_layer_sizes = [self.input_dim] + encoder_layer_sizes
         if decoder_layer_sizes is None:
             # self.latent_dim += self.n_batch
-            self.decoder_layer_sizes = [self.latent_dim, 32, 128]
+            self.decoder_layer_sizes = [self.latent_dim] + [32, 128]
         else:
-            self.decoder_layer_sizes = decoder_layer_sizes
+            self.decoder_layer_sizes = [self.latent_dim] + decoder_layer_sizes
             # self.decoder_layer_sizes[0] += self.n_batch
 
         # Encoder
         self.encoder = nn.Sequential()
         for i, (in_dim, out_dim) in enumerate(zip(self.encoder_layer_sizes[:-1], self.encoder_layer_sizes[1:])):
-            self.encoder.add_module(str(i), form_block(in_dim, out_dim, use_bn, activation))
+            self.encoder.add_module(str(i), form_block(in_dim, out_dim, 
+                                    self.use_bn, self.activation, self.use_bias, self.use_dropout))
 
         self.z_mean = nn.Linear(self.encoder_layer_sizes[-1], latent_dim, bias = True)
         self.z_log_var = nn.Linear(self.encoder_layer_sizes[-1], latent_dim, bias = True)
@@ -100,7 +112,8 @@ class protoCloud(nn.Module):
         # Decoder
         self.decoder = nn.Sequential()
         for i, (in_dim, out_dim) in enumerate(zip(self.decoder_layer_sizes[:-1], self.decoder_layer_sizes[1:])):
-            self.decoder.add_module(str(i), form_block(in_dim, out_dim, use_bn, activation))
+            self.decoder.add_module(str(i), form_block(in_dim, out_dim, 
+                                    self.use_bn, self.activation, self.use_bias, self.use_dropout))
         self.px_mean = nn.Linear(self.decoder_layer_sizes[-1], input_dim, bias = True)
 
         # likelihood
@@ -113,8 +126,7 @@ class protoCloud(nn.Module):
         self.theta = nn.Parameter(torch.randn(self.input_dim, self.num_classes))
         
         # Classifier
-        self.classifier = nn.Linear(self.num_prototypes, self.num_classes,
-                                    bias = False)
+        self.classifier = nn.Linear(self.num_prototypes, self.num_classes, bias = False)
         self._initialize_weights()
 
 
@@ -144,7 +156,7 @@ class protoCloud(nn.Module):
 
         if self.obs_dist == 'nb':
             px_mu = self.softmax(px_mu) * self.lib_size
-            if self.nb_dispersion == 'celltype':
+            if self.nb_dispersion.startswith('celltype') :
                 px_t = self.theta
             elif self.nb_dispersion == 'gene':
                 px_t = self.px_theta(px)
@@ -167,8 +179,21 @@ class protoCloud(nn.Module):
     
 
     def loss_function(self, x, target, pred, px_mu, px_theta, z_mu, z_logVar, sim_scores):
+        if target.max() >= self.prototype_class_identity.shape[0]:
+            print("Max target:", target.max())
+            print("Shape of prototype_class_identity:", self.prototype_class_identity.shape)
+            raise IndexError("Target index is out of bounds.")
+
+
         # Reconstruction loss
-        recon_loss, _ = self.recon_loss(x, target, px_mu, px_theta)
+        if self.nb_dispersion == 'celltype_target' or self.nb_dispersion == 'gene':            
+            # data target or gene
+            recon_loss, _ = self.recon_loss(x, target, px_mu, px_theta)
+        else: # self.nb_dispersion == 'celltype_pred' 
+            softmax_pred = F.softmax(pred, dim=1)
+            max_index = torch.multinomial(softmax_pred, 1)
+            recon_loss, _ = self.recon_loss(x, max_index, px_mu, px_theta)
+
 
         prototypes_of_correct_class = torch.t(self.prototype_class_identity[:, target.cpu()])
         index_prototypes_of_correct_class = (prototypes_of_correct_class == 1).nonzero(as_tuple = True)[1]
@@ -194,7 +219,7 @@ class protoCloud(nn.Module):
     def calc_sim_scores(self, z):
         # pairwise Euclidean distances between z and prototype vectors
         d = torch.cdist(z[:, :self.latent_dim // 2], 
-                        self.prototype_vectors[:, :self.latent_dim // 2], p = 2)  ## Batch size x prototypes
+                        self.prototype_vectors[:, :self.latent_dim // 2], p = 2)  ## Batch size x num_prototypes
         sim_scores = self.distance_2_similarity(d)
         return sim_scores
     
@@ -205,7 +230,7 @@ class protoCloud(nn.Module):
 
     def recon_loss(self, x, target, px_mu, px_t):
         if self.obs_dist == 'nb':
-            if self.nb_dispersion == 'celltype':            
+            if self.nb_dispersion.startswith('celltype'):
                 dispersion = F.linear(one_hot_encoder(target, self.num_classes), self.theta)
                 dispersion = torch.exp(dispersion)
 
@@ -216,8 +241,7 @@ class protoCloud(nn.Module):
             
             ll = -log_likelihood_nb(x, px_mu, dispersion)
             recon_loss = torch.mean(torch.sum(ll, dim = -1))
-
-            recon_loss = recon_loss / self.input_dim * self.latent_dim / 2.0
+            recon_loss = recon_loss / self.input_dim * self.latent_dim / 2.0 # scale nb loss down
 
         else:
             # x = F.normalize(x, dim = 0)
@@ -232,13 +256,19 @@ class protoCloud(nn.Module):
 
         for i in range(self.num_prototypes_per_class):
             p = torch.distributions.Normal(mu, torch.exp(logVar / 2))
-            p_v = self.prototype_vectors[nearest_pt[:, i], :]     # class prototype vector
+            p_v = self.prototype_vectors[nearest_pt[:, i], :]     # all class prototype i vector
             q = torch.distributions.Normal(p_v, torch.ones(p_v.shape).to(device))
             kl = torch.mean(torch.distributions.kl.kl_divergence(p, q), dim = -1)
             kl_loss[np.arange(sim_scores.shape[0]), nearest_pt[:, i]] = kl
 
         kl_loss = kl_loss * sim_scores    # element-wise scale by similarity scores
-        mask = kl_loss > 0              # prototypes contributes
+        mask = kl_loss > 0 # prototypes contributes
+
+        # prototypes_of_correct_class = torch.t(self.prototype_class_identity[:, target.cpu()])
+        # print(torch.equal(kl_loss > 0, prototypes_of_correct_class.to(device))) # True
+        # print(torch.sum(kl_loss > 0), torch.sum(kl_loss == 0), target)
+        # exit()
+
         kl_loss = torch.sum(kl_loss, dim = -1) / (torch.sum(sim_scores * mask, dim = -1))
         kl_loss = torch.mean(kl_loss)
 
@@ -264,7 +294,7 @@ class protoCloud(nn.Module):
     def atomic_loss(self, sim_scores, mask):
         attraction = torch.mean(torch.max(sim_scores * mask, 1).values)
         repulsion = torch.mean(torch.max(sim_scores * torch.logical_not(mask), 1).values)
-
+        # repulsion = torch.sum(torch.mean(sim_scores * torch.logical_not(mask), 1))
         return repulsion - attraction
 
 
@@ -275,7 +305,7 @@ class protoCloud(nn.Module):
 
         if self.obs_dist == 'nb':
             px_mu = self.softmax(px_mu) * self.lib_size
-            if self.nb_dispersion == 'celltype':
+            if self.nb_dispersion.startswith('celltype'):
                 px_t = self.theta
             elif self.nb_dispersion == 'gene':
                 px_t = self.px_theta(px)
@@ -319,6 +349,25 @@ class protoCloud(nn.Module):
         return z_mu
 
 
+    def get_recon(self, x):
+        self.eval()
+        if self.raw_input:     # raw: 1
+            x = torch.log(x + 1)
+
+        encode = self.encoder(x)
+        z_mu = self.z_mean(encode)
+        z_logVar = self.z_log_var(encode)
+        z = self.reparameterize(z_mu, z_logVar)
+
+        sim_scores = self.calc_sim_scores(z)
+        pred = self.classifier(sim_scores)
+
+        px = self.decoder(z)
+        px_mu = self.px_mean(px)
+
+        return px_mu
+
+
     def get_log_likelihood(self, input, target):
         if self.obs_dist != 'nb':
             raise NotImplementedError
@@ -330,10 +379,17 @@ class protoCloud(nn.Module):
             with torch.no_grad():
                 seed_torch(torch.device(device), seed = i)
 
-                _, px_mu, px_t, _, _, _ = self.forward(input)
+                pred, px_mu, px_t, _, _, _ = self.forward(input)
 
-                if self.nb_dispersion == 'celltype':            
+                if self.nb_dispersion == 'celltype_target':            
+                    # data target
                     dispersion = F.linear(one_hot_encoder(target, self.num_classes), self.theta)
+                    dispersion = torch.exp(dispersion)
+                elif self.nb_dispersion == 'celltype_pred': 
+                    # pred target
+                    softmax_pred = F.softmax(pred, dim=1)
+                    max_index = torch.multinomial(softmax_pred, 1)
+                    dispersion = F.linear(one_hot_encoder(max_index, self.num_classes), self.theta)
                     dispersion = torch.exp(dispersion)
                 elif self.nb_dispersion == 'gene':
                     dispersion = px_t
@@ -362,11 +418,28 @@ class protoCloud(nn.Module):
         self.classifier.weight.data.copy_(
             correct_class_connection * positive_one_weights_locations
             + incorrect_class_connection * negative_one_weights_locations)
+    
+    
+    # def _initialize_weights(self):
+    #     '''
+    #     initialize weights for all layers
+    #     '''
+    #     for m_name, m in self.named_modules():
+    #         if isinstance(m, nn.Linear):
+    #             nn.init.uniform_(m.weight, -0.08, 0.08)
+    #             if m.bias is not None:
+    #                 nn.init.constant_(m.bias, 0)
+    #         elif isinstance(m, nn.BatchNorm1d):
+    #             nn.init.constant_(m.weight, 1)
+    #             nn.init.constant_(m.bias, 0.001)
+    #         else:
+    #             pass
+    #     self.set_last_layer_incorrect_connection(incorrect_strength = -0.5)
 
 
     def _initialize_weights(self):
         '''
-        initialize weights for all layers
+        initialize weights for vae
         '''
         for m in self.encoder.modules():
             if isinstance(m, nn.Linear):
@@ -376,7 +449,7 @@ class protoCloud(nn.Module):
 
             elif isinstance(m, nn.BatchNorm1d):
                 nn.init.constant_(m.weight, 1)
-                nn.init.constant_(m.bias, 0)
+                nn.init.constant_(m.bias, 0.001)
 
         for m in self.decoder.modules():
             if isinstance(m, nn.Linear):
@@ -386,11 +459,9 @@ class protoCloud(nn.Module):
             
             elif isinstance(m, nn.BatchNorm1d):
                 nn.init.constant_(m.weight, 1)
-                nn.init.constant_(m.bias, 0)
+                nn.init.constant_(m.bias, 0.001)
 
         self.set_last_layer_incorrect_connection(incorrect_strength = -0.5)
-
-
 
 
 
