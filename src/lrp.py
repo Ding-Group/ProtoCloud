@@ -32,9 +32,9 @@ lrp_layer2method = {
     'nn.BatchNorm1d':   batchnorm1d_wrapper_fct,
     # 'nn.Linear':        linearlayer_eps_wrapper_fct,
     # 'nn.Linear':        linearlayer_gamma_wrapper_fct,
-    # 'nn.Linear':        linearlayer_Alpha1Beta0_wrapper_fct,
+    'nn.Linear':        linearlayer_Alpha1Beta0_wrapper_fct, # equals to LRP-Z+ rule
     # 'nn.Linear':        linearlayer_Alpha2Beta1_wrapper_fct,
-    'nn.Linear':        linearlayer_absZ_wrapper_fct,
+    # 'nn.Linear':        linearlayer_absZ_wrapper_fct,
     }
 
 
@@ -145,123 +145,147 @@ class model_canonized():
 
         for target_module_name, target_module in net.named_modules():
             if target_module_name not in updated_layers_names:
-                print('Not updated modules:', target_module_name)
+                print('\tNot updated modules:', target_module_name)
 
 
 
+def x_prp(model, input, prototype, epsilon):
+    cell = 0
+    x = torch.Tensor(input).to(device)
+    x.requires_grad = True
 
-## Generating protoypical explanations for each prototypes for 100 test images.
-def generate_explanations(model,    # model_wrapped
+    with torch.enable_grad():
+        # # backward参数: https://blog.csdn.net/sinat_28731575/article/details/90342082
+        if model.raw_input:
+            x = torch.log(x + 1)
+            x.retain_grad()
+        zx_mean = model.encoder(x)
+        zx_mean = model.z_mean(zx_mean)
+
+        # Equation 7 in the paper
+        d = (zx_mean - prototype)**2
+        R_zx = 1 / (d + epsilon)            # relavance of prototype to z_mu
+
+        R_zx.backward(torch.ones_like(R_zx))            # backward through encoder
+        rel = x.grad.data.to('cpu').detach().numpy()    # gradient of input
+        # print("rel.shape", rel.shape)   # torch.Size([n, 3346])
+        print("\tPRP:", np.max(rel), np.min(rel))
+
+    rel_sum = np.sum(rel, axis = 0)   # [1, 3346]
+    del x, zx_mean, d, R_zx, rel
+    torch.cuda.empty_cache()
+    return rel_sum
+
+def x_lrp(model, input):
+    cell = 0
+    x = torch.Tensor(input).to(device)
+    x.requires_grad = True
+
+    with torch.enable_grad():
+        if model.raw_input:
+            x = torch.log(x + 1)
+            x.retain_grad()
+        zx_mean = model.encoder(x)
+        zx_mean = model.z_mean(zx_mean)
+        s_px = model.calc_sim_scores(zx_mean)
+        R_yx = model.classifier(s_px)
+
+        R_yx.backward(torch.ones_like(R_yx))    # backward through encoder
+        rel = x.grad.data.to('cpu').detach().numpy()  # gradient of input [n, 3346]
+        # print("\tLRP:", np.max(rel), np.min(rel))
+    
+    del x, zx_mean, s_px, R_yx
+    torch.cuda.empty_cache()
+    return rel
+
+def z_recon(model, input):
+    cell = 0
+    x = torch.Tensor(input).to(device)
+    x.requires_grad = True
+
+    with torch.enable_grad():
+        if model.raw_input:
+            x = torch.log(x + 1)
+            x.retain_grad()
+        z = model.encoder(x)
+        zx_mean = model.z_mean(z)
+        zx_mean = torch.nn.Parameter(zx_mean, requires_grad=True) 
+        px = model.decoder(zx_mean)
+        px_mu = model.px_mean(px)
+
+        px_mu.backward(torch.ones_like(px_mu))    # backward through encoder
+        rel = zx_mean.grad.data.to('cpu').detach().numpy()  # gradient of input
+
+    rel_sum = np.sum(rel, axis = 0)   # [1, latent]
+    return rel_sum
+
+
+
+## Generating protoypical explanations for each prototypes/input data
+def generate_PRP_explanations(model,    # model_wrapped
                           prototypes,   # protoCloud.prototype_vectors
                           test_X, test_Y, 
                           data,
-                          epsilon,
-                          args):
+                          epsilon, args):
     model.eval()
-
-    def _x_prp(input, epsilon):
-        cell = 0
-        x = torch.Tensor(input).to(device)
-        x.requires_grad = True
-
-        with torch.enable_grad():
-            # backward参数: https://blog.csdn.net/sinat_28731575/article/details/90342082
-            if model.raw_input:
-                x = torch.log(x + 1)
-                x.retain_grad()
-            zx_mean = model.encoder(x)
-            zx_mean = model.z_mean(zx_mean)
-
-            # Equation 7 in the paper
-            p_vector = prototypes[pno, :]    # all latent for prototype pno
-            d = (zx_mean - p_vector)**2
-            R_zx = 1 / (d + epsilon)            # relavance of prototype to z_mu
-
-            R_zx.backward(torch.ones_like(R_zx))            # backward through encoder
-            rel = x.grad.data.to('cpu').detach().numpy()    # gradient of input
-            # print("rel.shape", rel.shape)   # torch.Size([n, 3346])
-
-        rel_sum = np.sum(rel, axis = 0)   # [1, 3346]
-        return rel_sum
-
-    def _x_lrp(input):
-        cell = 0
-        x = torch.Tensor(input).to(device)
-        x.requires_grad = True
-
-        with torch.enable_grad():
-            if model.raw_input:
-                x = torch.log(x + 1)
-                x.retain_grad()
-            zx_mean = model.encoder(x)
-            zx_mean = model.z_mean(zx_mean)
-            s_px = model.calc_sim_scores(zx_mean)
-            R_yx = model.classifier(s_px)
-
-            R_yx.backward(torch.ones_like(R_yx))    # backward through encoder
-            rel = x.grad.data.to('cpu').detach().numpy()  # gradient of input [n, 3346]
-
-        return rel
-
-    def _z_recon(input):
-        cell = 0
-        x = torch.Tensor(input).to(device)
-        x.requires_grad = True
-
-        with torch.enable_grad():
-            if model.raw_input:
-                x = torch.log(x + 1)
-                x.retain_grad()
-            z = model.encoder(x)
-            zx_mean = model.z_mean(z)
-            zx_mean = torch.nn.Parameter(zx_mean, requires_grad=True) 
-            px = model.decoder(zx_mean)
-            px_mu = model.px_mean(px)
-
-            px_mu.backward(torch.ones_like(px_mu))    # backward through encoder
-            rel = zx_mean.grad.data.to('cpu').detach().numpy()  # gradient of input
-
-        rel_sum = np.sum(rel, axis = 0)   # [1, latent]
-        return rel_sum
-
 
     # gene_names = data.gene_names
     cell_types = data.cell_encoder.classes_
     # cell_types = [str(i) for i in range(args.num_classes)]
-    num_prototypes = args.num_prototypes
+    print("Generating PRP explainations:")
 
+    proto_count = 0
     for c in range(args.num_classes):
-        idx = np.where(test_Y == c)[0]
-        print("Class: ", cell_types[c], "\tNum: ", len(idx))
-
+        print("\tClass: ", cell_types[c])
+        idx = np.where(data.Y == c)[0]
         class_prp = []
         # for each class, get the PRP genes of each prototype
-        for pno in range(num_prototypes):
-            rel_sum = _x_prp(test_X[idx, :], epsilon)
+        for pno in range(args.prototypes_per_class):
+            rel_sum = x_prp(model, data.X[idx, :], 
+                            prototypes[proto_count+pno, :], epsilon)
             class_prp.append(rel_sum)
+        proto_count += args.prototypes_per_class
         class_prp = np.stack(class_prp, axis = 0)     # (n_prototypes, n_genes)
-
         # save celltype corresponding PRP genes
-        path = args.prp_path + cell_types[c] + '_'
+        path = args.prp_path + cell_types[c].replace("/", " OR ") + '_'
         save_file(class_prp, args, "_relgenes", path)
+        
+    print("Saved PRP genes for each class")
 
+
+
+def generate_LRP_explanations(model,    # model_wrapped
+                          test_X, test_Y,
+                          data,
+                          epsilon, args):
+    model.eval()
+
+    # gene_names = data.gene_names
+    cell_types = data.cell_encoder.classes_
+    # cell_types = [str(i) for i in range(args.num_classes)]
+    print("Generating LRP explainations:")
+
+    proto_count = 0
+    for c in range(args.num_classes):
+        print("\tClass: ", cell_types[c])
+
+        idx = np.where(test_Y == c)[0]
         # save celltype corresponding LRP genes
-        rel = _x_lrp(test_X[idx, :])   # [n, 3346]
-        path = args.lrp_path + cell_types[c] + '_'
+        rel = x_lrp(model, test_X[idx, :])   # [n, 3346]
+        path = args.lrp_path + cell_types[c].replace("/", " OR ") + '_'
         save_file(rel, args, "_lrp", path)
         rel_sum = np.sum(rel, axis = 0)   # [1, 3346]
-        path = args.lrp_path + cell_types[c] + '_'
+        path = args.lrp_path + cell_types[c].replace("/", " OR ") + '_'
         save_file(rel_sum, args, "_relgenes", path)
 
         # save celltype corresponding recon latents
-        rel_sum = _z_recon(test_X[idx, :])
+        rel_sum = z_recon(model, test_X[idx, :])
         save_file(rel_sum, args, "_latents", path)
-    
-    print("Saved PRP genes for each class")
+        
+    print("Saved LRP genes for each class")
         
 
 
-### Save heatmaps overlayed on original images
 def save_prp_genes(rel, gene_names, write_path, args):
     """
     rel: rel.to('cpu')   # gradient of input

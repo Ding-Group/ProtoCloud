@@ -5,7 +5,7 @@ import numpy as np
 import src.glo as glo
 glo._init()
 glo.set_value('EPS', 1e-16)
-glo.set_value('LRP_FILTER_TOP_K', 0.05)
+glo.set_value('LRP_FILTER_TOP_K', 0.1)
 
 from src.utils import *
 from src.scRNAdata import *
@@ -21,49 +21,32 @@ def main(args):
     ### load dataset
     data = scRNAData(args)
     # ordered_celltype = ordered_class(data, args)
-    data_info_saver(data.cell_encoder, args, 'cell_encoder')
+    if data.Y is not None:
+        data_info_saver(data.cell_encoder, args, 'cell_encoder')
 
     if args.pretrain_model_pth is not None:
         print("Reformat data according to pretrained model")
         # resize data to model input dim
         data.gene_subset(args.pretrain_model_pth, args)
         data_info_saver(data.gene_names, args, 'gene_names')
-
-        if args.model_mode == 'train':
-            args.cont_train = 1
-            if args.new_label:
-                data.use_pred_label(args)
     else:
         args.model_data = None
     
 
+    print('\nData: ', args.dataset)
     # set dataloader
     if args.model_mode in ['train', 'plot']:
-        # (train_X, test_X, train_Y, test_Y, train_b, test_b) = data.split_data(args)
         (train_X, test_X, train_Y, test_Y) = data.split_data(args)
-        print('train_Y.shape: ', train_Y.shape)
-        # train_loader = data.assign_dataloader(train_X, train_Y, args.batch_size, train_b)
-        # test_loader = data.assign_dataloader(test_X, test_Y, len(test_Y), test_b)
         train_loader = data.assign_dataloader(train_X, train_Y, args.batch_size)
-        test_loader = data.assign_dataloader(test_X, test_Y, len(test_Y))
-        args.training_size = len(train_Y)
+        print('Training set size: {0}'.format(train_X.shape[0]))
 
     elif args.model_mode  in ['test', 'apply']:
         test_X = data.X
         test_Y = data.Y
-        # test_b = data.batch
-        # test_loader = data.assign_dataloader(test_X, test_Y, len(test_Y),  test_b)
-        test_loader = data.assign_dataloader(test_X, test_Y, len(test_Y))
         args.training_size = 0
-
-    # set training data related parameters
-    args.test_size = len(test_Y)
-    args.n_batch = data.n_batch
-
-    print('\nData: ',args.dataset)
-    print('Training set size: {0}'.format(args.training_size))
-    print('Test set size: {0}'.format(args.test_size))
-    print('Num of batches: {0}'.format(args.n_batch))
+    test_X = torch.Tensor(test_X)
+    test_Y = torch.LongTensor(test_Y) if test_Y is not None else test_Y
+    print('Test set size: {0}'.format(test_X.shape[0]))
 
 
     # Setup model
@@ -108,6 +91,7 @@ def main(args):
         args.input_dim = model_dict["input_dim"]
         args.num_classes = model_dict["num_classes"]
         args.num_prototypes = model_dict["num_prototypes"]
+        args.prototypes_per_class = model_dict["num_prototypes"] // model_dict["num_classes"]
         
         model = protoCloud(**model_dict).to(device)
         load_model(args.pretrain_model_pth, model)
@@ -123,9 +107,10 @@ def main(args):
     #######################################################
     if args.model_mode == "train":
         print('\nEnter training')
-        result_trend = run_model(model, train_loader, test_loader, 
+        result_trend = run_model(model, train_loader, test_X, test_Y, 
                                 args.epochs, args.lr, args.optimizer,
-                                args.two_step, args.ortho_coef)
+                                args.two_step, args.ortho_coef,
+                                args.early_stopping)
 
         # save model to model_dir
         save_model(model, args.model_dir, args.exp_code)
@@ -154,14 +139,20 @@ def main(args):
         else:
             predicted['idx1'] = data.cell_encoder.inverse_transform(predicted['idx1'])
             predicted['idx2'] = data.cell_encoder.inverse_transform(predicted['idx2'])
-        predicted['celltype'] = data.cell_encoder.inverse_transform(test_Y)
-
+        
+        if args.new_label: # save orig label as actual label
+            test_idx = load_file(args, '_idx.csv')['test_idx'].dropna().astype(int)
+            predicted['celltype'] = data.adata.obs["celltype"][test_idx]
+        elif test_Y is None:
+            pass
+        else:
+            predicted['celltype'] = data.cell_encoder.inverse_transform(test_Y)
 
         predicted = pd.DataFrame(predicted)
         save_file(predicted, args, '_pred.csv')
         print("\nPredictions saved")
 
-        if model.obs_dist == 'nb':
+        if model.obs_dist == 'nb' and test_Y is not None:
             # log-likelihood
             ll = model.get_log_likelihood(torch.tensor(test_X[:1000]).to(device), 
                                         torch.tensor(test_Y[:1000]).to(device)).detach().cpu().numpy()
@@ -185,22 +176,22 @@ def main(args):
     print('Visualizing results')
     if args.plot_trend:
         plot_epoch_trend(args)
-    if args.cm:
+    if args.cm and test_Y is not None:
         plot_confusion_matrix(args)
     if args.umap:
         plot_umap_embedding(args, data)
     if args.two_latent:
         plot_two_latents_embedding(args, data)
     if args.protocorr:
-        plot_protocorr_heatmap(args)
-    
+        plot_protocorr_heatmap(args, data)
+    if args.distance_dist:
+        plot_distance_to_prototypes(args, data)
 
 
     #######################################################
     # LRP based explanations & marker gene selection
-    if args.prp:
-        print("\nGenerating PRP explanations")
-
+    if args.prp or args.lrp:
+        print("\nGenerating model explanations")
         wrapper = model_canonized()
         # construct the model for generating LRP based explanations
         model_wrapped = protoCloud(**model_dict).to(device)
@@ -209,19 +200,30 @@ def main(args):
                               model, 
                               lrp_params=lrp_params_def1,
                               lrp_layer2method=lrp_layer2method)
-        print("Model wrapped")
-        
-        generate_explanations(model_wrapped, 
-                              model.prototype_vectors, 
-                              data.X,
-                              data.Y, 
-                              data,
-                              model.epsilon, 
-                              args,
-                              )
+        print("\tModel wrapped")
+
+        if args.prp:
+            generate_PRP_explanations(model_wrapped, 
+                                model.prototype_vectors, 
+                                test_X, test_Y, 
+                                data,
+                                model.epsilon, 
+                                args,
+                                )
+        if args.lrp:
+            #TODO: misclassified genes LRP
+            generate_LRP_explanations(model_wrapped, 
+                                test_X, test_Y,
+                                data,
+                                model.epsilon, 
+                                args,
+                                )
     
     if args.plot_prp:
         print("Ploting PRP visulization")
+        plot_prp_dist(data, args)
+    if args.plot_lrp:
+        print("Ploting LRP visulization")
         plot_lrp_dist(data, args)
         plot_top_gene_heatmap(data, args)
         plot_outlier_heatmap(data, args)
@@ -270,6 +272,7 @@ parser.add_argument("--decoder_layer_sizes", nargs='+', type=int, help="List of 
 
 # Optimizer Parameters + Survival Loss Function
 parser.add_argument('--two_step',    type = int, default = 1, choices = [0, 1], help = 'use two-step training or not')
+parser.add_argument('--early_stopping', type = int, default = 0, choices = [0, 1], help = 'use early stopping training or not')
 parser.add_argument('--ortho_coef',  type = float, default = 0.3, help = 'orthogonality_loss coefficient')
 parser.add_argument('--activation',  type = str, default = 'relu', choices = ['relu'])
 parser.add_argument('--use_bias',      type = int, default = 0, choices = [0, 1])
@@ -294,8 +297,13 @@ parser.add_argument('--cm',             type = int, default = 0, choices = [0, 1
 parser.add_argument('--umap',           type = int, default = 0, choices = [0, 1], help = 'plot umap')
 parser.add_argument('--two_latent',        type = int, default = 0, choices = [0, 1], help = 'plot misclassified points umap')
 parser.add_argument('--protocorr',      type = int, default = 0, choices = [0, 1], help = 'plot prototype correlation')
-parser.add_argument('--prp',            type = int, default = 1, choices = [0, 1], help = 'generate LRP based explanations')
-parser.add_argument('--plot_prp',       type = int, default = 0, choices = [0, 1], help = 'plot LRP explanation plots')
+parser.add_argument('--distance_dist',       type = int, default = 0, choices = [0, 1], help = 'plot latent distance distribution to prototypes')
+
+parser.add_argument('--prp',            type = int, default = 1, choices = [0, 1], help = 'generate all PRP based explanations')
+parser.add_argument('--lrp',            type = int, default = 1, choices = [0, 1], help = 'generate LRP based explanations')
+parser.add_argument('--plot_prp',       type = int, default = 0, choices = [0, 1], help = 'plot all PRP explanation plots')
+parser.add_argument('--plot_lrp',       type = int, default = 0, choices = [0, 1], help = 'plot LRP explanation plots')
+
 
 args = parser.parse_args()
 
@@ -327,11 +335,14 @@ makedir(results_dir)
 args.plot_dir = args.results_dir + 'plots/'
 makedir(args.plot_dir )
 
-
 args.prp_path = args.results_dir + 'prp/'
 makedir(args.prp_path)
 args.lrp_path = args.results_dir + 'lrp/'
 makedir(args.lrp_path)
+
+
+if args.cont_train:
+    args.two_step = 0
 
 if args.visual_result:
     args.plot_trend = 1
@@ -339,8 +350,14 @@ if args.visual_result:
     args.umap = 1
     args.two_latent = 1
     args.protocorr = 1
+    args.distance_dist = 1
+
+if args.lrp:
+    args.plot_lrp = 1
 if args.prp:
+    args.lrp = 1
     args.plot_prp = 1
+    args.plot_lrp = 1
 
 
 print('------args---------')

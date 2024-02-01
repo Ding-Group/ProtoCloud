@@ -278,7 +278,7 @@ class protoCloud(nn.Module):
     def orthogonal_loss(self):
         s_loss = 0
         for k in range(self.num_classes):
-            p_k = self.prototype_vectors[k * self.num_prototypes_per_class:(k+1) * self.num_prototypes_per_class, :]
+            p_k = self.prototype_vectors[k*self.num_prototypes_per_class : (k+1)*self.num_prototypes_per_class, :]
             p_k_mean = torch.mean(p_k, dim = 0)
             p_k_2 = p_k - p_k_mean
             p_k_dot = p_k_2 @ p_k_2.T
@@ -293,117 +293,9 @@ class protoCloud(nn.Module):
 
     def atomic_loss(self, sim_scores, mask):
         attraction = torch.mean(torch.max(sim_scores * mask, 1).values)
-        repulsion = torch.mean(torch.max(sim_scores * torch.logical_not(mask), 1).values)
-        # repulsion = torch.sum(torch.mean(sim_scores * torch.logical_not(mask), 1))
+        # repulsion = torch.mean(torch.max(sim_scores * torch.logical_not(mask), 1).values)
+        repulsion = torch.sum(torch.mean(sim_scores * torch.logical_not(mask), 1))
         return repulsion - attraction
-
-
-    def get_prototype_cells(self):
-        px = self.decoder(self.prototype_vectors)
-        px_mu = self.px_mean(px)
-        px_t = self.px_theta(px)
-
-        if self.obs_dist == 'nb':
-            px_mu = self.softmax(px_mu) * self.lib_size
-            if self.nb_dispersion.startswith('celltype'):
-                px_t = self.theta
-            elif self.nb_dispersion == 'gene':
-                px_t = self.px_theta(px)
-                px_t = torch.mean(px_t, 0, True)
-            else:
-                raise NotImplementedError
-            
-            px_t = torch.clamp(px_t, min = EPS)
-        else:
-            px_t = None
-
-        return px_mu, px_t
-
-
-    def get_pred(self, x, test = False):
-        self.eval()
-        if self.raw_input:     # raw: 1
-            x = torch.log(x + 1)
-
-        encode = self.encoder(x)
-        z_mu = self.z_mean(encode)
-        if test:
-            z = z_mu
-        else:
-            z_logVar = self.z_log_var(encode)
-            z = self.reparameterize(z_mu, z_logVar)
-
-        sim_scores = self.calc_sim_scores(z)
-        pred = self.classifier(sim_scores)
-
-        return pred, sim_scores
-    
-
-    def get_latent(self, x):
-        self.eval()
-        if self.raw_input:
-            x = torch.log(x + 1)
-        encode = self.encoder(x)
-        z_mu = self.z_mean(encode)
-
-        return z_mu
-
-
-    def get_recon(self, x):
-        self.eval()
-        if self.raw_input:     # raw: 1
-            x = torch.log(x + 1)
-
-        encode = self.encoder(x)
-        z_mu = self.z_mean(encode)
-        z_logVar = self.z_log_var(encode)
-        z = self.reparameterize(z_mu, z_logVar)
-
-        sim_scores = self.calc_sim_scores(z)
-        pred = self.classifier(sim_scores)
-
-        px = self.decoder(z)
-        px_mu = self.px_mean(px)
-
-        return px_mu
-
-
-    def get_log_likelihood(self, input, target):
-        if self.obs_dist != 'nb':
-            raise NotImplementedError
-        self.eval()
-        
-        n_sample = 5
-        ll_value = 0
-        for i in range(n_sample):
-            with torch.no_grad():
-                seed_torch(torch.device(device), seed = i)
-
-                pred, px_mu, px_t, _, _, _ = self.forward(input)
-
-                if self.nb_dispersion == 'celltype_target':            
-                    # data target
-                    dispersion = F.linear(one_hot_encoder(target, self.num_classes), self.theta)
-                    dispersion = torch.exp(dispersion)
-                elif self.nb_dispersion == 'celltype_pred': 
-                    # pred target
-                    softmax_pred = F.softmax(pred, dim=1)
-                    max_index = torch.multinomial(softmax_pred, 1)
-                    dispersion = F.linear(one_hot_encoder(max_index, self.num_classes), self.theta)
-                    dispersion = torch.exp(dispersion)
-                elif self.nb_dispersion == 'gene':
-                    dispersion = px_t
-                else:
-                    raise NotImplementedError
-                
-                ll = -log_likelihood_nb(input, px_mu, dispersion)
-                ll = torch.sum(ll, dim = -1)
-                ll_value += ll
-
-                del px_mu, px_t, dispersion, ll
-                torch.cuda.empty_cache()
-
-        return ll_value / n_sample
 
 
     def set_last_layer_incorrect_connection(self, incorrect_strength):
@@ -464,4 +356,117 @@ class protoCloud(nn.Module):
         self.set_last_layer_incorrect_connection(incorrect_strength = -0.5)
 
 
+
+    # get results helper functions
+    #######################################################
+    def get_prototype_cells(self):
+        px = self.decoder(self.prototype_vectors)
+        px_mu = self.px_mean(px)
+        px_t = self.px_theta(px)
+
+        if self.obs_dist == 'nb':
+            px_mu = self.softmax(px_mu) * self.lib_size
+            if self.nb_dispersion.startswith('celltype'):
+                px_t = self.theta
+            elif self.nb_dispersion == 'gene':
+                px_t = self.px_theta(px)
+                px_t = torch.mean(px_t, 0, True)
+            else:
+                raise NotImplementedError
+            
+            px_t = torch.clamp(px_t, min = EPS)
+        else:
+            px_t = None
+
+        return px_mu, px_t
+
+
+    def get_pred(self, x, test = False):
+        self.eval()
+        if self.raw_input:     # raw: 1
+            x = torch.log(x + 1)
+
+        encode = self.encoder(x)
+        z_mu = self.z_mean(encode)
+        if test:
+            z = z_mu
+        else:
+            z_logVar = self.z_log_var(encode)
+            z = self.reparameterize(z_mu, z_logVar)
+
+        sim_scores = self.calc_sim_scores(z)
+        pred = self.classifier(sim_scores)
+
+        return pred, sim_scores
+    
+
+    def get_latent(self, x):
+        self.eval()
+        if self.raw_input:
+            x = torch.log(x + 1)
+        encode = self.encoder(x)
+        z_mu = self.z_mean(encode)
+
+        return z_mu
+
+    
+    def get_decode(self, z):
+        px = self.decoder(z)
+        px_mu = self.px_mean(px)
+
+        return px_mu
+
+
+    def get_recon(self, x):
+        self.eval()
+        if self.raw_input:     # raw: 1
+            x = torch.log(x + 1)
+
+        encode = self.encoder(x)
+        z_mu = self.z_mean(encode)
+        z_logVar = self.z_log_var(encode)
+        z = self.reparameterize(z_mu, z_logVar)
+
+        sim_scores = self.calc_sim_scores(z)
+        pred = self.classifier(sim_scores)
+
+        return self.get_decoder(z)
+
+
+    def get_log_likelihood(self, input, target):
+        if self.obs_dist != 'nb':
+            raise NotImplementedError
+        self.eval()
+        
+        n_sample = 5
+        ll_value = 0
+        for i in range(n_sample):
+            with torch.no_grad():
+                seed_torch(torch.device(device), seed = i)
+
+                pred, px_mu, px_t, _, _, _ = self.forward(input)
+
+                if self.nb_dispersion == 'celltype_target':            
+                    # data target
+                    dispersion = F.linear(one_hot_encoder(target, self.num_classes), self.theta)
+                    dispersion = torch.exp(dispersion)
+                elif self.nb_dispersion == 'celltype_pred': 
+                    # pred target
+                    softmax_pred = F.softmax(pred, dim=1)
+                    max_index = torch.multinomial(softmax_pred, 1)
+                    dispersion = F.linear(one_hot_encoder(max_index, self.num_classes), self.theta)
+                    dispersion = torch.exp(dispersion)
+                elif self.nb_dispersion == 'gene':
+                    dispersion = px_t
+                else:
+                    raise NotImplementedError
+                
+                ll = -log_likelihood_nb(input, px_mu, dispersion)
+                ll = torch.sum(ll, dim = -1)
+                ll_value += ll
+
+                del px_mu, px_t, dispersion, ll
+                torch.cuda.empty_cache()
+
+        return ll_value / n_sample
 

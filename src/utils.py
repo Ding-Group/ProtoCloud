@@ -257,6 +257,7 @@ def model_metrics(predicted):
 
 
 def save_file(results, args, file_ending, save_dir=None):
+    # results_dir, exp_code
     """
     Save the prediction results to result dir.
     Args:
@@ -285,8 +286,13 @@ def save_file(results, args, file_ending, save_dir=None):
     # print("Saved results")
 
 
-def load_file(args, file_ending, path=None):
-    file_path = os.path.join(args.results_dir, args.exp_code + file_ending)
+def load_file(args, file_ending=None, path=None):
+    # results_dir, exp_code
+    if path is None:
+        file_path = os.path.join(args.results_dir, args.exp_code + file_ending)
+    else:
+        file_path = path
+    
     try:
         if file_path.endswith('.csv'):
             return pd.read_csv(file_path)
@@ -298,3 +304,6 @@ def load_file(args, file_ending, path=None):
             raise NotImplementedError("File format not supported")
     except:
         raise FileNotFoundError(file_path + " not found")
+
+
+

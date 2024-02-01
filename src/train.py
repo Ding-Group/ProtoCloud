@@ -10,13 +10,14 @@ device = 'cuda' if torch.cuda.is_available() else 'cpu'
 num_workers = 4 if torch.cuda.is_available() else 0
 
 
-def run_model(model, train_loader, test_loader, 
+def run_model(model, train_loader,
+            test_X, test_Y, 
             epochs, 
             lr = 1e-3, 
             optimizer = "AdamW",
             two_step = True,
             ortho_coef = 0.3,
-            ):
+            enable_early_stopping = 0):
     # setup optimizer
     optimizer_specs = \
             [# layers
@@ -39,15 +40,16 @@ def run_model(model, train_loader, test_loader,
     else:
         raise NotImplementedError
     
-    
+
     # setup loss coef  
     two_step_training = two_step
     coefs = {'crs_ent': 1, 'recon': 0.8, 'kl': 1, 
             'ortho': 0.0 if two_step_training else 1,
-            'atomic': 0.0 if two_step_training else 1,
+            'atomic': 1, # 0.0 if two_step_training else 1,
             }
     print('loss coef:', coefs)
-
+    # earlystopping
+    step2_allowed = 0 if two_step_training else 1
 
     # train
     print('Start training')
@@ -55,6 +57,8 @@ def run_model(model, train_loader, test_loader,
     train_loss_list = []
     train_acc_list = []
     valid_acc_list = []
+    earlystopping = -1
+    
     for epoch in range(epochs+1):
         train_acc, train_loss, train_recon, train_kl, \
             train_ce, train_ortho, train_atomic = _train_model(model = model, 
@@ -66,7 +70,20 @@ def run_model(model, train_loader, test_loader,
         if two_step_training:
             if epoch == epochs // 2:
                 coefs['ortho'] = ortho_coef
-                coefs['atomic'] = 1
+                # coefs['atomic'] = 1
+                step2_allowed = 1
+        # early stopping after two-step training
+        if step2_allowed and enable_early_stopping:
+            test_acc = _test_model(model = model, 
+                            input = test_X, label = test_Y,
+                            coefs = coefs,
+                            )
+            if test_acc > earlystopping:
+                earlystopping = test_acc
+            else:
+                print_results(epoch, test_acc, is_train = False)
+                print("Early stopping triggered!")
+                break
 
         
         if (epoch % 10 == 0):
@@ -76,7 +93,7 @@ def run_model(model, train_loader, test_loader,
             
             # validate
             test_acc = _test_model(model = model, 
-                                dataloader = test_loader,
+                                input = test_X, label = test_Y,
                                 coefs = coefs,
                                 )
             print_results(epoch, test_acc, is_train = False)
@@ -156,41 +173,25 @@ def _train_model(model, dataloader, optimizer, coefs):
     return train_acc, loss.item(), train_recon, train_kl, train_ce, train_ortho, train_atomic
 
 
-def _test_model(model, dataloader, coefs): 
+def _test_model(model, input, label, coefs): 
     # device = torch.device("cuda" if torch.cuda.is_available() else "cpu") 
     model.eval()
 
-    n_examples = len(dataloader.dataset)
-    n_correct = 0
+    input = torch.Tensor(input).to(device)
+    target = torch.LongTensor(label).to(device)
+    # batch_id = b.to(device)
 
-    for i, (sample, label) in enumerate(dataloader):
-        input = sample.to(device)
-        target = label.to(device)
-        # batch_id = b.to(device)
+    pred_y, px_mu, px_theta, z_mu, z_logVar, sim_scores = model(input)
+    # pred_y, px_mu, px_theta, z_mu, z_logVar, sim_scores = model(input, batch_id)
 
-        pred_y, px_mu, px_theta, z_mu, z_logVar, sim_scores = model(input)
-        # pred_y, px_mu, px_theta, z_mu, z_logVar, sim_scores = model(input, batch_id)
+    # get prediction
+    _, predicted = torch.max(pred_y.data, 1)
+    n_correct = (predicted == target).sum().item()
 
-        # recon_loss, kl_loss, cross_entropy, \
-        #     ortho_loss, atomic_loss = model.loss_function(input, target, pred_y, px_mu,
-        #                                                  px_theta, z_mu, z_logVar, sim_scores)
+    del input, target, pred_y, predicted, px_mu, px_theta
+    torch.cuda.empty_cache()
 
-        # get prediction
-        _, predicted = torch.max(pred_y.data, 1)
-        n_correct += (predicted == target).sum().item()
-
-        # # compute loss
-        # loss = (coefs['crs_ent'] * cross_entropy
-        #             + coefs['recon'] * recon_loss
-        #             + coefs['kl'] * kl_loss
-        #             + coefs['ortho'] * ortho_loss
-        #             + coefs['atomic'] * atomic_loss
-        #         )
-
-        del input, target, pred_y, predicted, px_mu, px_theta
-        torch.cuda.empty_cache()
-
-    test_acc = n_correct / n_examples
+    test_acc = n_correct / len(label)
     return test_acc#, loss.item()
 
 
@@ -210,7 +211,7 @@ def load_model(model_dir, model):
     print("Model loaded")
 
 
-def get_predictions(model, X, test: bool):
+def get_predictions(model, X, test: bool = False):
     """
     Get top 2 predictions from model
         test: if True, use z_mean for prediction
@@ -241,6 +242,13 @@ def get_predictions(model, X, test: bool):
 def get_latent(model, X):
     input = torch.Tensor(X).to(device)
     latent = model.get_latent(input).cpu().detach().numpy()
+    del input
+    return latent
+
+
+def get_decode(model, Z):
+    input = torch.Tensor(Z).to(device)
+    latent = model.get_decode(input).cpu().detach().numpy()
     del input
     return latent
 

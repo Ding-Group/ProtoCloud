@@ -125,8 +125,9 @@ def get_lrpwrapperformodule(module,
                                     autogradfunction = autogradfunction, 
                                     parameter1 = lrp_params['linear_ignorebias'] )
     elif type(autogradfunction) == linearlayer_absZ_wrapper_fct:
-       return zeroparam_wrapper_class(module, 
-                                    autogradfunction = autogradfunction)
+       return oneparam_wrapper_class(module, 
+                                    autogradfunction = autogradfunction, 
+                                    parameter1 = lrp_params['linear_ignorebias'] )
     
        
 
@@ -327,7 +328,7 @@ class linearlayer_gamma_wrapper_fct(torch.autograd.Function):
 
 
 
-# LRP-Alpha1Beta0 Rule
+# LRP-Alpha1Beta0 Rule == Z_plus rule
 class linearlayer_Alpha1Beta0_wrapper_fct(torch.autograd.Function):
     @staticmethod
     def forward(ctx, x, module, ignorebias):
@@ -391,15 +392,12 @@ class linearlayer_Alpha2Beta1_wrapper_fct(torch.autograd.Function):
     def forward(ctx, x, module, ignorebias):
         #stash module config params and trainable params
         propertynames, values = _configvalues_totensorlist(module)
-
         weight = module.weight.data.clone()
         if module.bias is None:
           bias = None
         else:
           bias = module.bias.data.clone()
-
         ignorebiasTensor = torch.tensor([ignorebias], dtype = torch.bool, device = module.weight.device)
-
         ctx.save_for_backward(x, weight, bias, ignorebiasTensor, *values)
         return module.forward(x)
 
@@ -438,32 +436,33 @@ class linearlayer_Alpha2Beta1_wrapper_fct(torch.autograd.Function):
 
         R1 = _f(X, pnlinear, relevance_output)
         R2 = _f(X, nplinear, relevance_output)
-        R = R1 * 2 - R2 * 1         # alpha=1, beta=0
+        R = R1 * 2 - R2 * 1         # alpha=2, beta=1
 
         return R, None, None
+
 
 
 # LRP-|Z| Rule: https://link.springer.com/chapter/10.1007/978-3-030-20518-8_24#Sec3
 class linearlayer_absZ_wrapper_fct(torch.autograd.Function):
     @staticmethod
-    def forward(ctx, x, module):
+    def forward(ctx, x, module, ignorebias):
         #stash module config params and trainable params
         propertynames, values = _configvalues_totensorlist(module)
-
         weight = module.weight.data.clone()
         if module.bias is None:
           bias = None
         else:
           bias = module.bias.data.clone()
-
-        ctx.save_for_backward(x, weight, bias, *values)
+        ignorebiasTensor = torch.tensor([ignorebias], dtype = torch.bool, device = module.weight.device)
+        ctx.save_for_backward(x, weight, bias, ignorebiasTensor, *values)
         return module.forward(x)
 
     @staticmethod
     def backward(ctx, grad_output):
         # input_, weight, bias, epstensor, *values = ctx.saved_tensors
-        input_, weight, bias, *values = ctx.saved_tensors
+        input_, weight, bias, ignorebiasTensor, *values = ctx.saved_tensors
         paramsdict = tensorlist_todict(values)
+        ignorebias = ignorebiasTensor.item()
         
         # set up module weights and bias
         if bias is None:
@@ -480,13 +479,20 @@ class linearlayer_absZ_wrapper_fct(torch.autograd.Function):
         relevance_output = relevance_filter(relevance_output, top_k_percent = LRP_FILTER_TOP_K)
 
         # Rule
-        abs_linear = abslinear(module)
+        pnlinear = posneglinear(module, ignorebias = ignorebias)
+        nplinear = negposlinear(module, ignorebias = ignorebias)
 
-        with torch.enable_grad():
-           Z = abs_linear(X)
-        S = safe_divide(relevance_output, Z.clone().detach(), eps0 = EPS, eps = 0)
-        Z.backward(S)
-        R = X.data * X.grad.data
+        def _f(X, module, relevance_output):
+          with torch.enable_grad():
+            Z = module(X)
+          S = safe_divide(relevance_output, Z.clone().detach(), eps0 = EPS, eps = 0)
+          Z.backward(S)
+          R = X.data * X.grad.data
+          return R
+
+        R1 = _f(X, pnlinear, relevance_output)
+        R2 = _f(X, nplinear, relevance_output)
+        R = R1 * 1 + R2 * 1         # alpha=1, beta=-1
 
         return R, None, None
 
@@ -563,6 +569,31 @@ def tensorlist_todict(values):
   return paramsdict
 
 
+class poslinear(nn.Module):
+    def _clone_module(self, module):
+        clone = nn.Linear(**{attr: getattr(module, attr) for attr in ['in_features','out_features']})
+        return clone.to(module.weight.device)
+
+    def __init__(self, linear, ignorebias):
+      super(poslinear, self).__init__()
+
+      self.alinear = self._clone_module(linear)
+      self.alinear.weight = torch.nn.Parameter(linear.weight.data.clone().clamp(min = 0)).to(linear.weight.device)
+      if ignorebias ==True:
+        self.b = None
+      else:
+          if linear.bias is not None:
+              self.b = torch.nn.Parameter(linear.bias.data.clone().clamp(min = 0) )
+
+    def forward(self, x):
+        wx = self.alinear(x)
+        if self.b is not None:
+          v = wx + self.b 
+        else:
+          v = wx
+        
+        return v
+
 
 class posneglinear(nn.Module):
     def _clone_module(self, module):
@@ -620,36 +651,7 @@ class negposlinear(nn.Module):
         return vp2 + vn2
     
 
-class abslinear(nn.Module):
-    def _clone_module(self, module):
-        clone = nn.Linear(**{attr: getattr(module, attr) for attr in ['in_features','out_features']})
-        return clone.to(module.weight.device)
 
-    def __init__(self, linear):
-      super(abslinear, self).__init__()
-
-      self.alinear = self._clone_module(linear)
-      self.alinear.weight = torch.nn.Parameter(linear.weight.data.clone()).to(linear.weight.device)
-      self.alinear.bias = None
-
-      if linear.bias is not None:
-        self.b = torch.nn.Parameter(linear.bias.data.clone())
-        self.b_sign = torch.sign(self.b)
-      else:
-        self.b = None
-
-    def forward(self, x):
-        wx = self.alinear(x)
-        wx_sign = torch.sign(wx)
-
-        if self.b is not None:
-          bv = self.b * self.b_sign * wx_sign
-          v = wx + bv
-        else:
-          v = wx
-        
-        return v
-##### input
 
 """ 
 class anysign_conv(nn.Module):
