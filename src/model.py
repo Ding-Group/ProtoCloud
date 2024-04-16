@@ -293,8 +293,8 @@ class protoCloud(nn.Module):
 
     def atomic_loss(self, sim_scores, mask):
         attraction = torch.mean(torch.max(sim_scores * mask, 1).values)
-        # repulsion = torch.mean(torch.max(sim_scores * torch.logical_not(mask), 1).values)
-        repulsion = torch.sum(torch.mean(sim_scores * torch.logical_not(mask), 1))
+        repulsion = torch.mean(torch.max(sim_scores * torch.logical_not(mask), 1).values)
+        # repulsion = torch.sum(torch.mean(sim_scores * torch.logical_not(mask), 1))
         return repulsion - attraction
 
 
