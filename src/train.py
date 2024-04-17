@@ -43,9 +43,9 @@ def run_model(model, train_loader,
 
     # setup loss coef  
     two_step_training = two_step
-    coefs = {'crs_ent': 1, 'recon': 0.8, 'kl': 1, 
+    coefs = {'crs_ent': 1, 'recon': 10, 'kl': 1,
             'ortho': 0.0 if two_step_training else 1,
-            'atomic': 1, # 0.0 if two_step_training else 1,
+            'atomic': 0.0 if two_step_training else 1,
             }
     print('loss coef:', coefs)
     # earlystopping
@@ -70,7 +70,7 @@ def run_model(model, train_loader,
         if two_step_training:
             if epoch == epochs // 2:
                 coefs['ortho'] = ortho_coef
-                # coefs['atomic'] = 1
+                coefs['atomic'] = 1
                 step2_allowed = 1
         # early stopping after two-step training
         if step2_allowed and enable_early_stopping:
