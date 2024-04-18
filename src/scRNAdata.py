@@ -364,6 +364,7 @@ class scRNAData():
     #         [(train_Y == t).sum() for t in torch.unique(train_Y, sorted=True)])
 
     #     weight = 1. / class_sample_count.float()
+    #     weight = 1. / class_sample_count.float()
     #     samples_weight = torch.tensor([weight[y] for y in train_Y])
 
     #     sampler = WeightedRandomSampler(samples_weight, len(samples_weight))
@@ -384,6 +385,7 @@ class scRNAData():
                 num_sample += min_type_num - num_cells
                 rares.append(c)
         print("Rare cell types:", len(rares))
+
         new_X = torch.zeros((X.shape[0] + num_sample, X.shape[1]))
         new_Y = torch.zeros(Y.shape[0] + num_sample, dtype=int)
         new_X[:X.shape[0]] = torch.from_numpy(X)
@@ -393,24 +395,29 @@ class scRNAData():
         for c in rares:
             rare = X[Y == c]
             num_sample = min_type_num - np.sum(Y == c)
+
             rates = torch.from_numpy(rare)
-            rates = rates[np.random.choice(rates.shape[0], num_sample)]
-            # # poisson
-            # rates[rates == 0] = 1 / rates.shape[1]
-            # new_X[start_idx : start_idx + num_sample, :] = torch.poisson(rates)
-            # multinomial
+            idx = np.tile(np.arange(rare.shape[0]), num_sample // rare.shape[0] + 1)
+            rates = rates[np.random.choice(idx, num_sample, replace=False)]
+
             from torch.distributions import Multinomial
-            N = rates.sum(dim=-1)
-            rates[rates == 0] = 1 / rates.shape[1]
             for i in range(num_sample):
-                new_X[start_idx + i]= Multinomial(total_count=int(N[i]), probs=rates[i]).sample()
-            
-            new_Y[start_idx : start_idx + num_sample] = torch.full((1, num_sample), c)
+                rate_i = rates[i, :] + 0.01
+                n_i = torch.sum(rate_i)
+                p = rate_i.to(torch.float64) / n_i
+
+                u_i = np.random.randint(low=50, high=100)
+                new_umi = np.ceil(n_i * u_i / 100).type(torch.int32)
+                new_X[start_idx + i] = Multinomial(total_count=int(new_umi), probs=p).sample()
+
+            new_Y[start_idx:start_idx + num_sample] = torch.full((1, num_sample), c)
             start_idx += num_sample
+
             del rare, rates
+
         new_X = new_X.numpy()
         new_Y = new_Y.numpy()
-        # print(type(new_X), type(new_Y))
+
         return new_X, new_Y
 
 
