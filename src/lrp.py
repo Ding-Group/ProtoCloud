@@ -155,7 +155,7 @@ def x_prp(model, input, prototype, epsilon):
     x.requires_grad = True
 
     with torch.enable_grad():
-        # # backward参数: https://blog.csdn.net/sinat_28731575/article/details/90342082
+        ## backward参数: https://blog.csdn.net/sinat_28731575/article/details/90342082
         if model.raw_input:
             x = torch.log(x + 1)
             x.retain_grad()
@@ -169,12 +169,12 @@ def x_prp(model, input, prototype, epsilon):
         R_zx.backward(torch.ones_like(R_zx))            # backward through encoder
         rel = x.grad.data.to('cpu').detach().numpy()    # gradient of input
         # print("rel.shape", rel.shape)   # torch.Size([n, 3346])
-        print("\tPRP:", np.max(rel), np.min(rel))
+        # print("\tPRP:", np.max(rel), np.min(rel))
 
-    rel_sum = np.sum(rel, axis = 0)   # [1, 3346]
+    rel_mean = np.mean(rel, axis = 0)   # [1, 3346]
     del x, zx_mean, d, R_zx, rel
     torch.cuda.empty_cache()
-    return rel_sum
+    return rel_mean
 
 def x_lrp(model, input):
     cell = 0
@@ -224,69 +224,66 @@ def z_recon(model, input):
 ## Generating protoypical explanations for each prototypes/input data
 def generate_PRP_explanations(model,    # model_wrapped
                           prototypes,   # protoCloud.prototype_vectors
-                          test_X, test_Y, 
+                          train_X, train_Y, 
                           data,
-                          epsilon, args):
+                          epsilon, 
+                          num_classes, prototypes_per_class,
+                          prp_path=None, exp_code=None, **kwargs):
     model.eval()
 
     # gene_names = data.gene_names
     cell_types = data.cell_encoder.classes_
-    # cell_types = [str(i) for i in range(args.num_classes)]
+    # cell_types = [str(i) for i in range(num_classes)]
     print("Generating PRP explainations:")
 
     proto_count = 0
-    for c in range(args.num_classes):
+    for c in range(num_classes):
         print("\tClass: ", cell_types[c])
-        idx = np.where(data.Y == c)[0]
+        idx = np.where(train_Y == c)[0]
         class_prp = []
         # for each class, get the PRP genes of each prototype
-        for pno in range(args.prototypes_per_class):
-            rel_sum = x_prp(model, data.X[idx, :], 
+        for pno in range(prototypes_per_class):
+            rel_mean = x_prp(model, train_X[idx, :], 
                             prototypes[proto_count+pno, :], epsilon)
-            class_prp.append(rel_sum)
-        proto_count += args.prototypes_per_class
+            class_prp.append(rel_mean)
+        proto_count += prototypes_per_class
         class_prp = np.stack(class_prp, axis = 0)     # (n_prototypes, n_genes)
         # save celltype corresponding PRP genes
-        path = args.prp_path + cell_types[c].replace("/", " OR ") + '_'
-        save_file(class_prp, args, "_relgenes", path)
+        path = prp_path + cell_types[c].replace("/", " OR ") + '_'
+        save_file(class_prp, path, exp_code, "_relgenes")
         
     print("Saved PRP genes for each class")
 
 
 
 def generate_LRP_explanations(model,    # model_wrapped
-                          test_X, test_Y,
-                          data,
-                          epsilon, args):
+                          test_X, test_Y, cell_types, gene_names,
+                          epsilon, lrp_path=None, exp_code=None, **kwargs):
     model.eval()
 
-    # gene_names = data.gene_names
-    cell_types = data.cell_encoder.classes_
-    # cell_types = [str(i) for i in range(args.num_classes)]
+    # cell_types = np.unique(test_Y)
     print("Generating LRP explainations:")
 
-    proto_count = 0
-    for c in range(args.num_classes):
-        print("\tClass: ", cell_types[c])
+    for c in cell_types:
+        print("\tClass: ", c)
 
         idx = np.where(test_Y == c)[0]
         # save celltype corresponding LRP genes
         rel = x_lrp(model, test_X[idx, :])   # [n, 3346]
-        path = args.lrp_path + cell_types[c].replace("/", " OR ") + '_'
-        save_file(rel, args, "_lrp", path)
+        path = lrp_path + c.replace("/", " OR ") + '_'
+        save_file(rel, path, exp_code, "_lrp")
         rel_sum = np.sum(rel, axis = 0)   # [1, 3346]
-        path = args.lrp_path + cell_types[c].replace("/", " OR ") + '_'
-        save_file(rel_sum, args, "_relgenes", path)
+        path = lrp_path + c.replace("/", " OR ") + '_'
+        save_file(rel_sum, path, exp_code, "_relgenes")
 
         # save celltype corresponding recon latents
         rel_sum = z_recon(model, test_X[idx, :])
-        save_file(rel_sum, args, "_latents", path)
+        save_file(rel_sum, path, exp_code, "_latents")
         
     print("Saved LRP genes for each class")
         
 
-
-def save_prp_genes(rel, gene_names, write_path, args):
+def save_prp_genes(rel, gene_names, write_path):
     """
     rel: rel.to('cpu')   # gradient of input
     gene_names: data.gene_names

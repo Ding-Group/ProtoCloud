@@ -7,7 +7,9 @@ import scanpy as sc
 import numpy as np
 import pandas as pd
 from scipy import sparse
+from scipy.sparse import csr_matrix
 
+from torch.distributions import Multinomial
 from torch.utils.data import Dataset, DataLoader, random_split, WeightedRandomSampler
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelEncoder
@@ -37,16 +39,16 @@ class scRNAData():
         Oesophagus: https://cellgeni.cog.sanger.ac.uk/tissue-stability/oesophagus.cellxgene.h5ad
     
     """
-    def __init__(self, args):
-        self.dataset_name = args.dataset
-        self.data_dir = args.data_dir
-        self.raw = args.raw
-        self.topngene = args.topngene
+    def __init__(self, dataset_name, data_dir, raw:bool, topngene,
+                split, **kwargs):
+        self.dataset_name = dataset_name
+        self.data_dir = data_dir
+        self.raw = raw
+        self.topngene = topngene
 
-        self.split = args.split
+        self.split = split
         self.time_order = None
         self.time_col = None
-        self.test_ratio = args.test_ratio
         self.species = None
 
         if self.topngene is not None:
@@ -93,9 +95,9 @@ class scRNAData():
                     preprocess_arg['filter_cell_by_counts'] = False
                 else:
                     raise ValueError("Dataset not found!")
-                # adata.obs["celltype"] = adata.obs["str_labels"].astype("category")
-                # adata.var = adata.var.set_index("gene_symbols")
-                # adata.var["gene_name"] = adata.var.index.tolist()
+                adata.obs["celltype"] = adata.obs["str_labels"].astype("category")
+                adata.var = adata.var.set_index("gene_symbols")
+                adata.var["gene_name"] = adata.var.index.tolist()
                 
                 adata = self._preprocess(adata, **preprocess_arg)
                 adata.write(save_path, compression='gzip')
@@ -294,22 +296,21 @@ class scRNAData():
         del adata
         print(self.adata)
         # self.adata.uns['log1p']["base"] = None
-        self.gene_names = self.adata.var["gene_name"].tolist()
+        self.gene_names = self.adata.var["gene_name"].values
 
-        if self.raw and 'counts' in self.adata.layers:
-            print("\tUsing layer 'counts' as input")
-            self.X = np.float32(np.array(self.adata.layers['counts'].todense()) if sparse.isspmatrix(self.adata.layers['counts']) else self.adata.layers['counts'])
-        else:
-            print("\tUsing adata.X as input")
-            self.X = np.float32(np.array(self.adata.X.todense()) if sparse.isspmatrix(self.adata.X) else self.adata.X)
+        # if self.raw and 'counts' in self.adata.layers:
+        #     print("\tUsing layer 'counts' as input")
+        #     self.X = np.float32(np.array(self.adata.layers['counts'].todense()) if sparse.isspmatrix(self.adata.layers['counts']) else self.adata.layers['counts'])
+        # else:
+        #     print("\tUsing adata.X as input")
+        #     self.X = np.float32(np.array(self.adata.X.todense()) if sparse.isspmatrix(self.adata.X) else self.adata.X)
 
         if "celltype" in self.adata.obs.columns:
-            celltypes = self.adata.obs["celltype"]
-            _, self.cell_encoder = self._label_encoder(np.unique(celltypes))
-            self.Y = self.cell_encoder.transform(celltypes)
+            self.celltypes = self.adata.obs["celltype"]
         else:
             print(f"\tDidn't find celltype annotation in dataset!")
-            self.Y = None
+            self.celltypes = None
+        self.cell_encoder = None
 
         # if 'batch' in self.adata.obs_names:
         #     self.batch = self.adata.obs['batch'].tolist()
@@ -319,35 +320,75 @@ class scRNAData():
         #     self.batch = np.ones(len(self.Y))
 
 
-    def split_data(self, args):
-        """split data into train and test"""
-        if args.new_label:
-            train_idx, test_idx = self.use_pred_label(args)
-
+    @staticmethod
+    def to_dense(adata, raw=True):
+        if raw and 'counts' in adata.layers:
+            print("\tUsing layer 'counts' as input")
+            X = np.array(adata.layers['counts'].todense(), dtype=np.int32) \
+                            if sparse.isspmatrix(adata.layers['counts']) \
+                                else adata.layers['counts'].astype(np.int32)
         else:
-            if self.split == None:
-                train_idx, test_idx = train_test_split(range(len(self.Y)),
-                                                    test_size = self.test_ratio, 
-                                                    shuffle = True)
-            # elif self.split in self.time_order:
-            #     # split data by ctrl and treatment
-            #     train_idx, test_idx = self._special_train_test(self.time_col, self.split)
-            else:
-                raise ValueError("split method not found!")\
-        
-        s1 = pd.Series(train_idx, name = 'train_idx')
-        s2 = pd.Series(test_idx, name = 'test_idx')
-        df = pd.concat([s1, s2], axis = 1)
-        save_file(df, args, '_idx.csv')
+            print("\tUsing adata.X as input")
+            X = np.array(adata.X.todense(), dtype=np.int32) \
+                            if sparse.isspmatrix(adata.X) \
+                                else adata.X.astype(np.int32)
+        return X
 
-        train_X = self.X[train_idx]
-        test_X = self.X[test_idx]
-        train_Y = self.Y[train_idx]
-        test_Y = self.Y[test_idx]
+    @staticmethod
+    def to_sparse_tensor(adata, raw=True):
+        if raw and 'counts' in adata.layers:
+            print("\tUsing layer 'counts' as input")
+            X = adata.layers['counts']
+        else:
+            print("\tUsing adata.X as input")
+            X = adata.X
+        X = all_to_coo(X)
+        return X
+
+
+    def split_data(self, new_label, data_balance, model_mode, 
+                test_ratio, results_dir, exp_code, index_file = None, pretrain_model_pth = None, **kwargs):
+        """split data into train and test"""
+        X = self.to_dense(self.adata, raw=self.raw)
+        # X = self.to_sparse_tensor(self.adata, raw=self.raw)
+        if test_ratio == 1:
+            # all data for test
+            return (None, X, None, self.celltypes)
+
+        if new_label:
+            train_idx, test_idx = self.use_pred_label(pretrain_model_pth, results_dir, 
+                                                        exp_code, test_ratio, **kwargs)
+        elif index_file is not None:
+            print("\tUsing existing index from:", index_file)
+            indices = load_file(results_dir, path=index_file, **kwargs)
+            train_idx = indices['train_idx'].dropna().values.astype(int) 
+            test_idx = indices['test_idx'].dropna().values.astype(int) 
+        else:
+            if self.split is None:
+                train_idx, test_idx = train_test_split(range(X.shape[0]),
+                                                    test_size = test_ratio, 
+                                                    shuffle = True)
+            else:
+                raise ValueError("split method not found!")
+
+            s1 = pd.Series(train_idx, name = 'train_idx')
+            s2 = pd.Series(test_idx, name = 'test_idx')
+            df = pd.concat([s1, s2], axis = 1)
+            save_file(df, results_dir, exp_code, '_idx.csv')
+
+        train_X = X[train_idx]
+        test_X = X[test_idx]
+
+        train_Y = self.celltypes[train_idx]
+        test_Y = self.celltypes[test_idx]
+        if self.cell_encoder is None:
+            _, self.cell_encoder = self._label_encoder(np.unique(train_Y))
+        train_Y = self.cell_encoder.transform(train_Y)
+
         # train_b = self.batch[train_idx]
         # test_b = self.batch[test_idx]
 
-        if args.data_balance and args.model_mode == "train":
+        if data_balance and model_mode == "train":
             train_X, train_Y = self.augment_rares(train_X, train_Y)
         for c in np.unique(train_Y):
             portion = np.sum(train_Y == c) / train_Y.shape[0]
@@ -369,8 +410,8 @@ class scRNAData():
     #     sampler = WeightedRandomSampler(samples_weight, len(samples_weight))
     #     return sampler
 
-
-    def augment_rares(self, X, Y):
+    @staticmethod
+    def augment_rares(X, Y):
         print("\tAugmenting rare cell types")
         avg_p = 1 / len(np.unique(Y)) / 2
         # avg_p = 0.06 if avg_p >= 0.1 else avg_p
@@ -394,23 +435,27 @@ class scRNAData():
             rare = X[Y == c]
             num_sample = min_type_num - np.sum(Y == c)
             rates = torch.from_numpy(rare)
-            rates = rates[np.random.choice(rates.shape[0], num_sample)]
-            # # poisson
-            # rates[rates == 0] = 1 / rates.shape[1]
-            # new_X[start_idx : start_idx + num_sample, :] = torch.poisson(rates)
+            idx = np.tile(np.arange(rare.shape[0]), num_sample // rare.shape[0] + 1)
+            rates = rates[np.random.choice(idx, num_sample, replace=False)]
+
             # multinomial
-            from torch.distributions import Multinomial
-            N = rates.sum(dim=-1)
-            rates[rates == 0] = 1 / rates.shape[1]
             for i in range(num_sample):
-                new_X[start_idx + i]= Multinomial(total_count=int(N[i]), probs=rates[i]).sample()
-            
-            new_Y[start_idx : start_idx + num_sample] = torch.full((1, num_sample), c)
+                rate_i = rates[i, :] + 0.01
+                n_i = torch.sum(rate_i)
+                p = rate_i.to(torch.float64) / n_i
+
+                u_i = np.random.randint(low=50, high=100)
+                new_umi = np.ceil(n_i * u_i / 100).type(torch.int32)
+                new_X[start_idx + i] = Multinomial(total_count=int(new_umi), probs=p).sample()
+
+            new_Y[start_idx:start_idx + num_sample] = torch.full((1, num_sample), c)
             start_idx += num_sample
+            
             del rare, rates
+
         new_X = new_X.numpy()
         new_Y = new_Y.numpy()
-        # print(type(new_X), type(new_Y))
+
         return new_X, new_Y
 
 
@@ -430,8 +475,8 @@ class scRNAData():
     #     train_indexes = np.concatenate((train_indexes, sub_train))
     #     return train_indexes, sub_test
 
-
-    def assign_dataloader(self, X, Y, batch_size, batch=None):
+    @staticmethod
+    def assign_dataloader(X, Y, batch_size, batch=None):
         if batch is not None:
             dataset = CustomDataset(X, Y, batch)
         else:
@@ -446,8 +491,8 @@ class scRNAData():
         return data_loader
 
 
-
-    def _label_encoder(self, labels):
+    @staticmethod
+    def _label_encoder(labels):
         """ Generate the numerical labels."""
         encoder = LabelEncoder()
         encoder.fit(labels)
@@ -499,14 +544,15 @@ class scRNAData():
 
         # select top n genes
         if isinstance(self.topngene, int):
-            adata = self._top_n_genes(adata)
+            adata = self._top_n_genes(self.topngene, adata)
         
         return adata
     
-    def _top_n_genes(self, adata):
-        print("Selecting top %d genes ..." %self.topngene)
+    @staticmethod
+    def _top_n_genes(topngene, adata):
+        print("Selecting top %d genes ..." %topngene)
         sc.pp.highly_variable_genes(adata, 
-                                    n_top_genes = self.topngene,
+                                    n_top_genes = topngene,
                                     flavor = 'cell_ranger',
         )
         adata = adata[:, adata.var['highly_variable']]
@@ -537,32 +583,30 @@ class scRNAData():
         return adata[:, mask]
     
 
-    def sort_obs(self, obs_name, time_order):
-        # sort adata.obs by time points
-        self.adata.obs[obs_name] = pd.Categorical(self.adata.obs[obs_name], 
-                                                  categories = time_order, 
-                                                  ordered = True)
-        self.adata.obs.sort_values(obs_name, inplace = True)
+    # def sort_obs(self, obs_name, time_order):
+    #     # sort adata.obs by time points
+    #     self.adata.obs[obs_name] = pd.Categorical(self.adata.obs[obs_name], 
+    #                                               categories = time_order, 
+    #                                               ordered = True)
+    #     self.adata.obs.sort_values(obs_name, inplace = True)
 
 
-    def type_specific_mean(self):
-        celltype_mean = {}
-        for c in self.cell_encoder.classes_:
-            _sub_expre = np.mean(self.adata[self.adata.obs['celltype'] == c].X, axis = 0)
-            celltype_mean[c] = _sub_expre
-        celltype_mean = torch.tensor(np.array(list(celltype_mean.values())))
-        return celltype_mean
+    # def type_specific_mean(self):
+    #     celltype_mean = {}
+    #     for c in self.cell_encoder.classes_:
+    #         _sub_expre = np.mean(self.adata[self.adata.obs['celltype'] == c].X, axis = 0)
+    #         celltype_mean[c] = _sub_expre
+    #     celltype_mean = torch.tensor(np.array(list(celltype_mean.values())))
+    #     return celltype_mean
     
 
-    def gene_subset(self, pretrain_model_pth, args):
+    def gene_subset(self, pretrain_model_pth, **kwargs):
         """
         load the pretrained model genes and resize the data
         """
         model_dir = os.path.dirname(pretrain_model_pth)
         model_dataname = os.path.basename(pretrain_model_pth)
         model_dataname = "_".join(model_dataname.split("_")[4:])[:-4]
-
-        args.model_data = model_dataname
         print("Use genes as: ", model_dataname)
 
         # load model used gene_names
@@ -576,57 +620,68 @@ class scRNAData():
         print("number of genes in loaded model: ", len(model_genes))
 
         # get shared genes
-        import collections
-        share_genes = list((collections.Counter(model_genes) & collections.Counter(self.adata.var.index)).elements())
+        share_genes = [gene for gene in self.gene_names if gene in model_genes]
+        # import collections
+        # share_genes = list((collections.Counter(model_genes) & collections.Counter(self.gene_names)).elements())
         print("\tShared genes in loaded model: %.2f%%"%(len(share_genes) / len(model_genes)*100))
         print("\tShared genes in new dataset: %.2f%%"%(len(share_genes) / len(self.gene_names)*100))
         gene_mask = [True if i in share_genes else False for i in model_genes]
-        var_indices = [self.adata.var_names.get_loc(gene) for gene in share_genes]
-        
-        # build new data object     
-        test_X = torch.zeros(self.X.shape[0], len(model_genes))
-        test_X[:, np.where(gene_mask)[0]] = torch.Tensor(self.X[:, var_indices])
-        adata = anndata.AnnData(X = test_X.numpy())
-        adata.obs = self.adata.obs.copy()
-        adata.var['gene_name']  = model_genes
-        adata.var.index = adata.var['gene_name']
+        # var_indices = [self.gene_names.get_loc(gene) for gene in share_genes]
+        var_indices = [np.where(self.gene_names == gene)[0][0] \
+                        for gene in share_genes if (self.gene_names == gene).any()]
 
-        self.adata = adata
-        self.X = self.adata.X
+        
+        # build new data object
+        new_shape = (self.adata.X.shape[0], len(model_genes))
+        new_adata = sc.AnnData(csr_matrix(new_shape, dtype=self.adata.X.dtype))
+        new_adata.X = self._resize_and_fill(self.adata.X, new_shape, gene_mask, var_indices)
+        for layer_name, layer in self.adata.layers.items():
+            new_adata.layers[layer_name] = self._resize_and_fill(layer, new_shape, gene_mask, var_indices)
+        # test_X = torch.zeros(self.adata.X.shape[0], len(model_genes))
+        # test_X[:, np.where(gene_mask)[0]] = torch.Tensor(self.X[:, var_indices])
+        # new_adata = anndata.AnnData(X = test_X.numpy())
+        new_adata.obs = self.adata.obs.copy()
+        new_adata.var['gene_name']  = model_genes
+        new_adata.var.index = new_adata.var['gene_name']
+
+        self.adata = new_adata
         self.gene_names = self.adata.var["gene_name"].tolist()
 
 
-    def use_pred_label(self, args):
+    def use_pred_label(self, pretrain_model_pth, results_dir, exp_code,
+                        test_ratio, prob_mask=True, **kwargs):
         """
         Use pred label with high certainty as train, rest as test
         """
-        assert args.pretrain_model_pth is not None
+        assert pretrain_model_pth is not None
         try:
-            model_exp_code = os.path.basename(args.pretrain_model_pth)[:-4]
+            model_exp_code = os.path.basename(pretrain_model_pth)[:-4]
             model_exp_code = "_".join(model_exp_code.split("_")[:4] + [self.dataset_name])
-            path = os.path.join(args.results_dir, model_exp_code + '_pred.csv')
-            predicted = load_file(args, path=path)
+            path = os.path.join(results_dir, model_exp_code + '_pred.csv')
+            predicted = load_file(results_dir, exp_code, path=path)
         except FileNotFoundError:
             raise FileNotFoundError("Apply the model for prediction first")
         
         # train: only use label with assigned and prob >= threshold
-        prob = predicted['prob1'].values
-        orig = predicted['celltype'].values
-        prob_mask = np.array([(i >= 0.6 and o not in ["Unassigned", "Other"]) 
-                            for i, o in zip(prob, orig)])
-        # predicted = predicted[prob_mask]
+        if prob_mask:
+            prob = predicted['prob1'].values
+            orig = predicted['celltype'].values
+            prob_mask = np.array([(i >= 0.6 and o not in ["Unassigned", "Other"]) 
+                                for i, o in zip(prob, orig)])
+            predicted = predicted[prob_mask]
+            self.adata = self.adata[prob_mask, :]
 
-        # self.adata = self.adata[prob_mask, :]
         # self.X = self.adata.X
-        self.cell_encoder = data_info_loader('cell_encoder', os.path.dirname(args.pretrain_model_pth))
-        self.Y = self.cell_encoder.transform(predicted['idx1'].values)
+        self.cell_encoder = data_info_loader('cell_encoder', os.path.dirname(pretrain_model_pth))
+        # self.celltype = self.cell_encoder.transform(predicted['idx1'].values)
+        self.celltypes = predicted['idx1'].values
         print(self.cell_encoder.classes_)
         print("Using predicted label from pretrained model")
         
         # balance out the training & testing
         train_r = sum(prob_mask)/len(prob_mask)
-        if train_r > (1 - args.test_ratio):
-            n = (train_r - (1-args.test_ratio)) * len(prob_mask)
+        if train_r > (1 - test_ratio):
+            n = (train_r - (1-test_ratio)) * len(prob_mask)
             shuffle = np.random.choice(sum(prob_mask), size = int(n), replace=False)
             train_idx = np.array([i for i in np.where(prob_mask)[0] if i not in shuffle])
             test_idx = np.concatenate((np.where(~prob_mask)[0], np.where(prob_mask)[0][shuffle]))
@@ -634,7 +689,16 @@ class scRNAData():
             train_idx = np.where(prob_mask)[0]
             test_idx = np.where(~prob_mask)[0]
 
-        return train_idx, test_idx
+        return train_idx, test_idx 
+
+    @staticmethod
+    def _resize_and_fill(orig, new_shape, gene_mask, var_indices):
+        new_matrix = csr_matrix(new_shape, dtype=orig.dtype)
+        new_matrix[:, np.where(gene_mask)[0]] = orig[:, var_indices]
+        # for i, mask in enumerate(gene_mask):
+        #     if mask:
+        #         new_matrix[:, i] = orig[:, var_indices[i]]
+        return new_matrix
 
 
 

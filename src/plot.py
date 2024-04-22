@@ -1,3 +1,4 @@
+from typing import Any, Iterable, Mapping, Sequence, Tuple, Union, Optional, Callable, Literal, List
 import math
 import numpy as np
 import pandas as pd
@@ -7,6 +8,7 @@ import scipy
 import umap
 import seaborn as sns
 import matplotlib.pyplot as plt
+import matplotlib.lines as mlines
 from matplotlib.pyplot import show
 from matplotlib.collections import QuadMesh
 from matplotlib_venn import venn2
@@ -22,18 +24,19 @@ num_workers = 4 if torch.cuda.is_available() else 0
 
 
 ### plot functions
-def plot_epoch_trend(args):
-    # epochs, plot_dir, exp_code, **kwargs
+def plot_epoch_trend(epochs, results_dir, plot_dir, exp_code, **kwargs):
+    # epochs, results_dir, plot_dir, exp_code, **kwargs
     # print(result_file)
-    trend = load_file(args, '_trend.npy')
+    trend = load_file(results_dir, exp_code, '_trend.npy')
     
-    epochs = range(0, args.epochs+1)
-    save_path = args.plot_dir + args.exp_code + '_'
+    epochs = range(0, epochs+1)
+    save_path = plot_dir + exp_code + '_'
 
     # Plot accuracy
     plt.figure()
     plt.plot(epochs, trend[1], label='Training Accuracy', color='#308695')
-    plt.plot(epochs, trend[2], label='Validation Accuracy', color='#E69D45')
+    if kwargs["model_validation"]:
+        plt.plot(epochs, trend[2], label='Validation Accuracy', color='#E69D45')
     # plt.title('Accuracy vs. Epochs')
     plt.xlabel('Epochs')
     plt.ylabel('Accuracy')
@@ -56,7 +59,6 @@ def plot_epoch_trend(args):
 
 
 
-
 def plot_cell_likelihoods(args, ll):
     # Calculate the average log-likelihood
     avg_ll = np.mean(ll)
@@ -75,9 +77,9 @@ def plot_cell_likelihoods(args, ll):
 
 
 def plot_confusion_matrix(args):
-    predicted = load_file(args, '_pred.csv')
-    orig_y = predicted['celltype']
-    pred_y = predicted['idx1']
+    predicted = load_file(args.results_dir, args.exp_code, '_pred.csv')
+    orig_y = predicted['label']
+    pred_y = predicted['pred1']
 
     unique_types = np.unique(np.concatenate((orig_y, pred_y)))
     cm = confusion_matrix(orig_y, pred_y, labels = unique_types)
@@ -109,7 +111,7 @@ def plot_confusion_matrix(args):
 
     label_x = ax.get_xticklabels()
     plt.setp(label_x, rotation=45, horizontalalignment='right')
-    # title = " ".join([args.model, 'Confusion Matrix on', args.dataset])
+    # title = " ".join([args.model_name, 'Confusion Matrix on', args.dataset_name])
     # plt.title(title, fontsize = 20)
 
     plt.tight_layout()
@@ -124,40 +126,59 @@ def plot_confusion_matrix(args):
 
 
 
-def plot_umap_embedding(args, data):
+def plot_latent_embedding(latent_embedding, proto_embedding=None, 
+                        pred=None, orig=None, proto_classes=None,
+                        plot_dim: Optional[int] = None,
+                        prototypes_per_class: Optional[int] = 6,
+                        all_color = None,
+                        path: Optional[str] = None, 
+                        **kwargs):
     """
-    Plot the umap embedding of the data, color and label based on y.
+    Plot the latent embedding of the data.
     args:
-        latent (np.array): The data that we are finding an embedding for, (n,d)
-        proto (np.array): The prototypes of the model, (k,d)
-        y (np.array): The labels of the data, (n,)
-        data (Data): The scRNAData object that contains the cell encoder and cell color
+        latent_embedding
+            The data that we are finding an embedding for, shape (n,d)
+        proto_embedding
+            The prototypes of the model, shape (k,d)
+        
     """ 
-    latent = load_file(args, '_latent.npy')[:, :args.latent_dim//2]
-    proto = load_file(args, '_prototypes.npy')[:, :args.latent_dim//2]
-    predicted = load_file(args, '_pred.csv')
-    y = predicted['celltype'] if 'celltype' in predicted.columns else predicted['idx1']   # actual label
+    if plot_dim != 2:
+        path_ending = "_umap.png"
+        umap_kwargs = {'n_neighbors': 10, 'min_dist': 0.05}
+        embedding = umap.UMAP(**umap_kwargs).fit_transform(np.concatenate((latent_embedding, proto_embedding), axis = 0))
+        latent_embedding = embedding[:latent_embedding.shape[0], :]
+        proto_embedding = embedding[latent_embedding.shape[0]:, :] if proto_embedding is not None else None
+    else:
+        path_ending = "_2latent.png"
+        latent_embedding = latent_embedding[:, 0:2]
+        proto_embedding = proto_embedding[:, 0:2] if proto_embedding is not None else None
 
 
-    umap_kwargs = {'n_neighbors': 10, 'min_dist': 0.05}
-
-    embedding = umap.UMAP(**umap_kwargs).fit_transform(np.concatenate((latent, proto), axis = 0))
-    latent_embedding = embedding[:latent.shape[0], :]
-    proto_embedding = embedding[latent.shape[0]:, :]
-
-    f, ax = plt.subplots(1, figsize = (14, 10))
-
-    model_labels = data.cell_encoder.classes_
-    cell_labels = np.unique(y)
+    # color cells by groundtruth unless DNE use model labels
+    if orig is not None:
+        cell_labels = np.unique(orig)
+        y = orig
+    else:
+        cell_labels = np.unique(pred)
+        y = pred
+        print("\tNo ground truth, color cell embedding by prediction")
+    # if plot prototypes, use model labels
+    if proto_embedding is not None:
+        model_labels = proto_classes
+    else:
+        model_labels = []
     all_labels = set(set(list(np.unique(model_labels))+list(np.unique(cell_labels))))
     
-    cmap = plt.cm.nipy_spectral
-    norm = plt.Normalize(0, len(all_labels)-1)
-    all_color_list = [cmap(i) for i in np.linspace(0, 1, len(all_labels))]
-    all_color = {}
-    for i, c in enumerate(all_labels):
-        all_color[c] = all_color_list[i]
+    if all_color is None:
+        cmap = plt.cm.nipy_spectral
+        norm = plt.Normalize(0, len(all_labels)-1)
+        all_color_list = [cmap(i) for i in np.linspace(0, 1, len(all_labels))]
+        all_color = {}
+        for i, c in enumerate(all_labels):
+            all_color[c] = all_color_list[i]
 
+
+    f, ax = plt.subplots(1, figsize = (14, 10))
     # plot latent embeddings, color according to orig labels
     for label in cell_labels:
         ax.scatter(
@@ -167,148 +188,284 @@ def plot_umap_embedding(args, data):
             color = all_color[label],
             label = label,
             )
-        # if args.model_data is not None:
-        #     x_center = np.mean(latent_embedding[y == label, 0])
-        #     y_center = np.mean(latent_embedding[y == label, 1])
-        #     ax.text(x_center*1.02, y_center*1.05,
-        #             label, 
-        #             # color = all_color[label],
-        #             fontsize = 12,
-        #             style = 'oblique', 
-        #             horizontalalignment='center',
-        #             verticalalignment='top',
-        #             wrap=True,
-        #             bbox=dict(boxstyle='round,pad=0.05', fc='w', lw=0, alpha=0.8),
-        #             )
-    
-    # plot prototype embeddings, color according to prototype labels
-    for t, label in enumerate(model_labels):
-        count = args.prototypes_per_class * t
-        for i in range(args.prototypes_per_class):
-            ax.scatter(
-                *proto_embedding[count+i, :].T,
-                s=60,
-                linewidth=0.7,
-                edgecolors="k",
-                marker="o",
-                alpha=0.8,
+        x_center = np.mean(latent_embedding[y == label, 0])
+        y_center = np.mean(latent_embedding[y == label, 1])
+        ax.text(x_center*1.02, y_center*1.05,
+                label, 
                 color = all_color[label],
-            )
-        # # add class label text at the center of each prototype embeddings
-        # x_center = np.mean(proto_embedding[count : count+args.prototypes_per_class, 0])
-        # y_center = np.mean(proto_embedding[count : count+args.prototypes_per_class, 1])
-        # ax.text(x_center*1.02, y_center*1.05,
-        #         label, 
-        #         # color = all_color[label],
-        #         fontsize = 14,
-        #         style = "italic", 
-        #         horizontalalignment='center',
-        #         verticalalignment='top',
-        #         wrap=True,
-        #         bbox=dict(boxstyle='round,pad=0.05', fc='w', lw=0, alpha=0.8),
-        #         )
-        
-    # title = " ".join([args.model, 'UMAP embedding on', args.dataset])
-    # ax.set_title(title)
+                fontsize = 6,
+                style = 'oblique', 
+                horizontalalignment='center',
+                verticalalignment='top',
+                wrap=True,
+                bbox=dict(boxstyle='round,pad=0.05', fc='w', lw=0, alpha=0.8),
+                )
+    
+    if proto_embedding is not None:
+        # plot prototype embeddings, color according to prototype labels
+        for t, label in enumerate(model_labels):
+            count = prototypes_per_class * t
+            for i in range(prototypes_per_class):
+                ax.scatter(
+                    *proto_embedding[count+i, :].T,
+                    s=60,
+                    linewidth=0.7,
+                    edgecolors="k",
+                    marker="o",
+                    alpha=0.8,
+                    color = all_color[label],
+                )
+            # add class label text at the center of each prototype embeddings
+            x_center = np.mean(proto_embedding[count : count+prototypes_per_class, 0])
+            y_center = np.mean(proto_embedding[count : count+prototypes_per_class, 1])
+            ax.text(x_center*1.02, y_center*1.05,
+                    label, 
+                    color = all_color[label],
+                    fontsize = 8,
+                    style = "italic", 
+                    horizontalalignment='center',
+                    verticalalignment='top',
+                    wrap=True,
+                    bbox=dict(boxstyle='round,pad=0.05', fc='w', lw=0, alpha=0.8),
+                    )
+
+    legend_handles = []
+    for label, color in all_color.items():
+        handle = mlines.Line2D([], [], color=color, linestyle='None', marker='o', markersize=20, label=label)
+        legend_handles.append(handle)
     ncol = 1 if len(all_labels) < 20 else len(all_labels)//20
-    ax.legend(bbox_to_anchor=(1.04, 1), loc="upper left", ncol=ncol)
+    ax.legend(handles=legend_handles, bbox_to_anchor=(1.04, 1), loc="upper left", ncol=ncol)
+
     ax = plt.gca()
     ax.set_xticks([])   # Hide the x and y axis ticks
     ax.set_yticks([])
     
-    path = args.plot_dir + args.exp_code + '_umap.png'
-    plt.subplots_adjust(right=0.7)
-    plt.savefig(path, bbox_inches="tight")
-    plt.close()
+    if path is None:
+        plt.show()
+    else:
+        path += path_ending
+        plt.subplots_adjust(right=0.7)
+        plt.savefig(path, bbox_inches="tight")
+        plt.close()
     print("\tUMAP embedding saved")
 
 
-def plot_two_latents_embedding(args, data):
-    latent_embedding = load_file(args, '_latent.npy')[:, 0:2]
-    proto_embedding = load_file(args, '_prototypes.npy')[:, 0:2]
-    predicted = load_file(args, '_pred.csv')
-    y = predicted['celltype'] if 'celltype' in predicted.columns else predicted['idx1'] 
+# def plot_umap_embedding(args, data, plot_dim=None, proto=None):
+#     """
+#     Plot the umap embedding of the data, color and label based on y.
+#     args:
+#         latent (np.array): The data that we are finding an embedding for, (n,d)
+#         proto (np.array): The prototypes of the model, (k,d)
+#         y (np.array): The labels of the data, (n,)
+#         data (Data): The scRNAData object that contains the cell encoder and cell color
+#     """ 
+#     # latent, proto, orig, pred, args: latent_dim, prototypes_per_class, plot_dir, exp_code
+#     # plot_dim=2: 2latent, proto=None: no prototypes
+#     latent = load_file(args.results_dir, args.exp_code, '_latent.npy')[:, :args.latent_dim//2]
+#     proto = load_file(args.results_dir, args.exp_code, '_prototypes.npy')[:, :args.latent_dim//2]
+#     predicted = load_file(args.results_dir, args.exp_code, '_pred.csv')
+#     y = predicted['label'] if 'label' in predicted.columns else predicted['pred1']   # actual label
 
-    f, ax = plt.subplots(1, figsize = (14, 10))
 
-    model_labels = data.cell_encoder.classes_
-    cell_labels = np.unique(y)
-    all_labels = set(set(list(np.unique(model_labels))+list(np.unique(cell_labels))))
+#     umap_kwargs = {'n_neighbors': 10, 'min_dist': 0.05}
+
+#     embedding = umap.UMAP(**umap_kwargs).fit_transform(np.concatenate((latent, proto), axis = 0))
+#     latent_embedding = embedding[:latent.shape[0], :]
+#     proto_embedding = embedding[latent.shape[0]:, :]
+
+#     f, ax = plt.subplots(1, figsize = (14, 10))
+
+#     if args.pretrain_model_pth is not None:
+#         model_encoder = data_info_loader('cell_encoder', os.path.dirname(args.pretrain_model_pth))
+#         model_labels = model_encoder.classes_
+#     else:
+#         model_labels = data.cell_encoder.classes_
+#     print("model_labels: ", model_labels)
+#     if data.Y is not None:
+#         cell_labels = data.cell_encoder.classes_
+#         print("cell_labels: ", cell_labels)
+#     else:
+#         cell_labels = model_labels
+#         print("\tNo ground truth, color cell embedding by prediction")
+#     all_labels = set(set(list(np.unique(model_labels))+list(np.unique(cell_labels))))
     
-    cmap = plt.cm.nipy_spectral
-    norm = plt.Normalize(0, len(all_labels)-1)
-    all_color_list = [cmap(i) for i in np.linspace(0, 1, len(all_labels))]
-    all_color = {}
-    for i, c in enumerate(all_labels):
-        all_color[c] = all_color_list[i]
+#     cmap = plt.cm.nipy_spectral
+#     norm = plt.Normalize(0, len(all_labels)-1)
+#     all_color_list = [cmap(i) for i in np.linspace(0, 1, len(all_labels))]
+#     all_color = {}
+#     for i, c in enumerate(all_labels):
+#         all_color[c] = all_color_list[i]
+
+#     # plot latent embeddings, color according to orig labels
+#     for label in cell_labels:
+#         ax.scatter(
+#             *latent_embedding[y == label, :].T,
+#             s=3, # point size
+#             alpha=0.5,
+#             color = all_color[label],
+#             label = label,
+#             )
+#         x_center = np.mean(latent_embedding[y == label, 0])
+#         y_center = np.mean(latent_embedding[y == label, 1])
+#         ax.text(x_center*1.02, y_center*1.05,
+#                 label, 
+#                 color = all_color[label],
+#                 fontsize = 6,
+#                 style = 'oblique', 
+#                 horizontalalignment='center',
+#                 verticalalignment='top',
+#                 wrap=True,
+#                 bbox=dict(boxstyle='round,pad=0.05', fc='w', lw=0, alpha=0.8),
+#                 )
     
-    # plot latent embeddings, color according to orig labels
-    for label in cell_labels:
-        ax.scatter(
-            *latent_embedding[y == label, :].T,
-            s=5, # point size
-            alpha=0.5,
-            color = all_color[label],
-            label = label,
-            )
-        # x_center = np.mean(latent_embedding[y == label, 0])
-        # y_center = np.mean(latent_embedding[y == label, 1])
-        # ax.text(x_center*1.02, y_center*1.05,
-        #         label, 
-        #         # color = all_color[label],
-        #         fontsize = 12,
-        #         style = 'oblique', 
-        #         horizontalalignment='center',
-        #         verticalalignment='top',
-        #         wrap=True,
-        #         bbox=dict(boxstyle='round,pad=0.05', fc='w', lw=0, alpha=0.8),
-        #         )
+#     # plot prototype embeddings, color according to prototype labels
+#     for t, label in enumerate(model_labels):
+#         count = args.prototypes_per_class * t
+#         for i in range(args.prototypes_per_class):
+#             ax.scatter(
+#                 *proto_embedding[count+i, :].T,
+#                 s=60,
+#                 linewidth=0.7,
+#                 edgecolors="k",
+#                 marker="o",
+#                 alpha=0.8,
+#                 color = all_color[label],
+#             )
+#         # add class label text at the center of each prototype embeddings
+#         x_center = np.mean(proto_embedding[count : count+args.prototypes_per_class, 0])
+#         y_center = np.mean(proto_embedding[count : count+args.prototypes_per_class, 1])
+#         ax.text(x_center*1.02, y_center*1.05,
+#                 label, 
+#                 color = all_color[label],
+#                 fontsize = 8,
+#                 style = "italic", 
+#                 horizontalalignment='center',
+#                 verticalalignment='top',
+#                 wrap=True,
+#                 bbox=dict(boxstyle='round,pad=0.05', fc='w', lw=0, alpha=0.8),
+#                 )
+#     # title = " ".join([args.model_name, 'UMAP embedding on', args.dataset_name])
+#     # ax.set_title(title)
+
+#     legend_handles = []
+#     for label, color in all_color.items():
+#         handle = mlines.Line2D([], [], color=color, linestyle='None', marker='o', markersize=20, label=label)
+#         legend_handles.append(handle)
+#     ncol = 1 if len(all_labels) < 20 else len(all_labels)//20
+#     ax.legend(handles=legend_handles, bbox_to_anchor=(1.04, 1), loc="upper left", ncol=ncol)
+
+#     ax = plt.gca()
+#     ax.set_xticks([])   # Hide the x and y axis ticks
+#     ax.set_yticks([])
     
-    # plot prototype embeddings, color according to prototype labels
-    for t, label in enumerate(model_labels):
-        count = args.prototypes_per_class * t
-        for i in range(args.prototypes_per_class ):
-            ax.scatter(
-                *proto_embedding[count+i, :].T,
-                s=60,
-                linewidth=0.7,
-                edgecolors="k",
-                marker="o",
-                color = all_color[label],
-            )
-        # # add class label text at the center of each prototype embeddings
-        # x_center = np.mean(proto_embedding[count:count+args.prototypes_per_class, 0])
-        # y_center = np.mean(proto_embedding[count:count+args.prototypes_per_class, 1])
-        # ax.text(x_center*1.02, y_center*1.05,
-        #         label, 
-        #         # color = all_color[label],
-        #         fontsize = 14,
-        #         style = "italic", 
-        #         horizontalalignment='center',
-        #         verticalalignment='top',
-        #         wrap=True,
-        #         bbox=dict(boxstyle='round,pad=0.05', fc='w', lw=0, alpha=0.8),
-        #         )
+#     path = args.plot_dir + args.exp_code + '_umap.png'
+#     plt.subplots_adjust(right=0.7)
+#     plt.savefig(path, bbox_inches="tight")
+#     plt.close()
+#     print("\tUMAP embedding saved")
+
+
+# def plot_two_latents_embedding(args, data):
+#     latent_embedding = load_file(args.results_dir, args.exp_code, '_latent.npy')[:, 0:2]
+#     proto_embedding = load_file(args.results_dir, args.exp_code, '_prototypes.npy')[:, 0:2]
+#     predicted = load_file(args.results_dir, args.exp_code, '_pred.csv')
+#     y = predicted['label'] if 'label' in predicted.columns else predicted['pred1'] 
+
+#     f, ax = plt.subplots(1, figsize = (14, 10))
+
+#     if args.pretrain_model_pth is not None:
+#         model_encoder = data_info_loader('cell_encoder', os.path.dirname(args.pretrain_model_pth))
+#         model_labels = model_encoder.classes_
+#     else:
+#         model_labels = data.cell_encoder.classes_
+#     if data.Y is not None:
+#         cell_labels = data.cell_encoder.classes_
+#         # print("cell_labels: ", cell_labels)
+#     else:
+#         cell_labels = model_labels
+#         print("\tNo ground truth, color cell embedding by prediction")
+#     all_labels = set(set(list(np.unique(model_labels))+list(np.unique(cell_labels))))
+    
+#     cmap = plt.cm.nipy_spectral
+#     norm = plt.Normalize(0, len(all_labels)-1)
+#     all_color_list = [cmap(i) for i in np.linspace(0, 1, len(all_labels))]
+#     all_color = {}
+#     for i, c in enumerate(all_labels):
+#         all_color[c] = all_color_list[i]
+    
+#     # plot latent embeddings, color according to orig labels
+#     for label in cell_labels:
+#         ax.scatter(
+#             *latent_embedding[y == label, :].T,
+#             s=5, # point size
+#             alpha=0.5,
+#             color = all_color[label],
+#             label = label,
+#             )
+#         # x_center = np.mean(latent_embedding[y == label, 0])
+#         # y_center = np.mean(latent_embedding[y == label, 1])
+#         # ax.text(x_center*1.02, y_center*1.05,
+#         #         label, 
+#         #         # color = all_color[label],
+#         #         fontsize = 12,
+#         #         style = 'oblique', 
+#         #         horizontalalignment='center',
+#         #         verticalalignment='top',
+#         #         wrap=True,
+#         #         bbox=dict(boxstyle='round,pad=0.05', fc='w', lw=0, alpha=0.8),
+#         #         )
+    
+#     # plot prototype embeddings, color according to prototype labels
+#     for t, label in enumerate(model_labels):
+#         count = args.prototypes_per_class * t
+#         for i in range(args.prototypes_per_class ):
+#             ax.scatter(
+#                 *proto_embedding[count+i, :].T,
+#                 s=60,
+#                 linewidth=0.7,
+#                 edgecolors="k",
+#                 marker="o",
+#                 color = all_color[label],
+#             )
+#         # # add class label text at the center of each prototype embeddings
+#         # x_center = np.mean(proto_embedding[count:count+args.prototypes_per_class, 0])
+#         # y_center = np.mean(proto_embedding[count:count+args.prototypes_per_class, 1])
+#         # ax.text(x_center*1.02, y_center*1.05,
+#         #         label, 
+#         #         # color = all_color[label],
+#         #         fontsize = 14,
+#         #         style = "italic", 
+#         #         horizontalalignment='center',
+#         #         verticalalignment='top',
+#         #         wrap=True,
+#         #         bbox=dict(boxstyle='round,pad=0.05', fc='w', lw=0, alpha=0.8),
+#         #         )
         
-    # title = "First 2 latents embedding on " + args.dataset
-    # ax.set_title(title)
-    ncol = 1 if len(all_labels) < 20 else len(all_labels)//20
-    ax.legend(bbox_to_anchor=(1.04, 1), loc="upper left", ncol=ncol)
-    ax = plt.gca()
-    ax.set_xticks([])   # Hide the x and y axis ticks
-    ax.set_yticks([])
+#     # title = "First 2 latents embedding on " + args.dataset_name
+#     # ax.set_title(title)
+
+#     legend_handles = []
+#     for label, color in all_color.items():
+#         handle = mlines.Line2D([], [], color=color, linestyle='None', marker='o', markersize=20, label=label)
+#         legend_handles.append(handle)
+#     ncol = 1 if len(all_labels) < 20 else len(all_labels)//20
+#     ax.legend(handles=legend_handles, bbox_to_anchor=(1.04, 1), loc="upper left", ncol=ncol)
+
+#     ax = plt.gca()
+#     ax.set_xticks([])   # Hide the x and y axis ticks
+#     ax.set_yticks([])
     
-    path = args.plot_dir + args.exp_code + '_2latent.png'
-    plt.subplots_adjust(right=0.7)
-    plt.savefig(path, bbox_inches="tight")
-    plt.close()
-    print("\tLatent2 embedding saved")
+#     path = args.plot_dir + args.exp_code + '_2latent.png'
+#     plt.subplots_adjust(right=0.7)
+#     plt.savefig(path, bbox_inches="tight")
+#     plt.close()
+#     print("\tLatent2 embedding saved")
 
 
 
 def plot_protocorr_heatmap(args, data):
     # prototype correlation heatmap
-    proto = load_file(args, "_prototypes.npy")
+    proto = load_file(args.results_dir, args.exp_code, "_prototypes.npy")
 
     df = pd.DataFrame(proto).T.corr()
     plt.figure(figsize = (8,8))
@@ -322,13 +479,13 @@ def plot_protocorr_heatmap(args, data):
     # Celltype label for each prototype group
     celltypes = data.cell_encoder.classes_
     plt.xticks(np.arange(args.prototypes_per_class//2, args.num_prototypes, args.prototypes_per_class), 
-                celltypes, rotation=45)
+                celltypes)
     plt.yticks(np.arange(args.prototypes_per_class//2, args.num_prototypes, args.prototypes_per_class), 
-                celltypes, rotation=90)
+                celltypes)
 
-    plt.ylabel('Prototypes', fontsize = 14)
-    plt.xlabel('Prototypes', fontsize = 14)
-    # title = " ".join([args.model, 'Prototype Correlation on', args.dataset])
+    plt.ylabel('Prototypes', fontsize = 12)
+    plt.xlabel('Prototypes', fontsize = 12)
+    # title = " ".join([args.model_name, 'Prototype Correlation on', args.dataset_name])
     # plt.title(title)
 
     save_path = args.plot_dir + args.exp_code + '_protoCorr.png'
@@ -339,10 +496,10 @@ def plot_protocorr_heatmap(args, data):
 
 
 def plot_distance_to_prototypes(args, data):
-    latents = load_file(args, '_latent.npy')
-    protos = load_file(args, '_prototypes.npy')
-    predicted = load_file(args, '_pred.csv')
-    pred = predicted['idx1'].values
+    latents = load_file(args.results_dir, args.exp_code, '_latent.npy')
+    protos = load_file(args.results_dir, args.exp_code, '_prototypes.npy')
+    predicted = load_file(args.results_dir, args.exp_code, '_pred.csv')
+    pred = predicted['pred1'].values
 
     classes = data.cell_encoder.classes_
     all_distances = {}
@@ -379,7 +536,7 @@ def plot_distance_to_prototypes(args, data):
     ax.spines['right'].set_visible(False)
     ax.set_xticks([])   # Hide the x and y axis ticks
     ax.set_yticks([])
-    title = args.dataset + ' Distance Distribution to Prototypes'
+    title = args.dataset_name + ' Distance Distribution to Prototypes'
     # plt.title(title)
     plt.xlabel('Distance to Prototype')
     plt.ylabel('Density')
@@ -398,24 +555,23 @@ def plot_distance_to_prototypes(args, data):
 
 # PRP & LRP related plots
 #######################################################
-def plot_prp_dist(data, args):
+def plot_prp_dist(celltypes, gene_names, 
+                num_classes, prototypes_per_class,
+                prp_path, exp_code, **kwargs):
     """
     Plot the histogram of PRP scores of all genes for each cell type
     """
-    prp_path = args.prp_path
-    celltypes = data.cell_encoder.classes_
-    gene_names = pd.Series(data.gene_names)
-    filename = '_' + args.exp_code + '_relgenes.npy'
+    filename = '_' + exp_code + '_relgenes.npy'
 
-    for i in range(args.num_classes):
+    for i in range(num_classes):
         file1 = celltypes[i].replace("/", " OR ") + filename
         proto_rel = np.load(prp_path + file1, allow_pickle = True)
 
         # Create a figure with 6 subplots (one for each prototype) in one row
-        fig, axes = plt.subplots(args.prototypes_per_class, 1, 
-                                 figsize=(20, 5*args.prototypes_per_class))
+        fig, axes = plt.subplots(prototypes_per_class, 1, 
+                                 figsize=(20, 5*prototypes_per_class))
 
-        for p in range(args.prototypes_per_class):
+        for p in range(prototypes_per_class):
             gene_rel = proto_rel[p, :]
             ax = axes[p]
 
@@ -450,20 +606,17 @@ def plot_prp_dist(data, args):
 
 
 
-def plot_lrp_dist(data, args):
+def plot_lrp_dist(celltypes, gene_names, num_classes, lrp_path, exp_code, **kwargs):
     """
     Plot the histogram of LRP scores of all genes for each cell type
     """
-    lrp_path = args.lrp_path
-    celltypes = data.cell_encoder.classes_
-    gene_names = pd.Series(data.gene_names)
-    filename = '_' + args.exp_code + '_relgenes.npy'
+    filename = '_' + exp_code + '_relgenes.npy'
 
     df_top_genes = pd.DataFrame()
 
     # Open the file in write mode and create/overwrite the existing file
-    # with open(lrp_path+args.exp_code+'_LRPgenes.txt', 'w') as file:
-    for i in range(args.num_classes):
+    # with open(lrp_path+exp_code+'_LRPgenes.txt', 'w') as file:
+    for i in range(num_classes):
         file1 = celltypes[i].replace("/", " OR ") + filename
         gene_rel = np.load(lrp_path + file1, allow_pickle = True) # genes
 
@@ -507,22 +660,21 @@ def plot_lrp_dist(data, args):
         df_top_genes = pd.concat([df_top_genes, pd.Series(top_genes, name = celltypes[i])], axis = 0)
 
     # Save DataFrame to csv
-    save_file(df_top_genes, args, '_LRPgenes', lrp_path)
+    save_file(df_top_genes, lrp_path, exp_code, '_LRPgenes')
     print("\tPRP relavance genes saved")
         
 
 
-def plot_top_gene_heatmap(data, args):
+def plot_top_gene_heatmap(celltypes, gene_names,
+                        num_classes,
+                        lrp_path, exp_code, **kwargs):
     """
     Plot the heatmap of top lrp genes across all cell type
     """
-    lrp_path = args.lrp_path
-    celltypes = data.cell_encoder.classes_
-    gene_names = pd.Series(data.gene_names)
-    filename = '_' + args.exp_code + '_relgenes.npy'
+    filename = '_' + exp_code + '_relgenes.npy'
 
     all_marker_idx = []
-    for i in range(args.num_classes):
+    for i in range(num_classes):
         file1 = celltypes[i].replace("/", " OR ") + filename
         gene_rel = np.load(lrp_path + file1, allow_pickle = True) # genes
         
@@ -532,14 +684,14 @@ def plot_top_gene_heatmap(data, args):
     all_marker_idx = list(set(all_marker_idx))
 
     marker_value = []
-    for i in range(args.num_classes):
+    for i in range(num_classes):
         file1 = celltypes[i].replace("/", " OR ") + filename
         gene_rel = np.load(lrp_path + file1, allow_pickle = True) # genes
         marker_value.append(gene_rel[all_marker_idx])
 
     all_marker_df = pd.DataFrame(marker_value, index = celltypes, columns = gene_names[all_marker_idx])
 
-    plt.figure(figsize = (len(all_marker_idx) // 6, args.num_classes // 3))
+    plt.figure(figsize = (len(all_marker_idx) // 6, num_classes // 3))
     ax = sns.heatmap(all_marker_df,
             linewidths = 0.5,
             cmap = "Blues_r")
@@ -555,14 +707,13 @@ def plot_top_gene_heatmap(data, args):
     print("\tCell type - marker gene heatmap saved")
 
 
-def plot_outlier_heatmap(data, args):
-    lrp_path = args.lrp_path
-    celltypes = data.cell_encoder.classes_
-    gene_names = pd.Series(data.gene_names)
-    filename1 = "_" + args.exp_code + "_relgenes.npy"
-    filename2 = "_" + args.exp_code + "_lrp.npy"
+def plot_outlier_heatmap(celltypes, gene_names,
+                        num_classes,
+                        lrp_path, exp_code, **kwargs):
+    filename1 = "_" + exp_code + "_relgenes.npy"
+    filename2 = "_" + exp_code + "_lrp.npy"
 
-    for i in range(args.num_classes):
+    for i in range(num_classes):
         # get top genes
         sum_gene_rel = np.load(lrp_path + celltypes[i].replace("/", " OR ") + filename1, allow_pickle = True)
         df = pd.DataFrame(data = sum_gene_rel).T
@@ -591,12 +742,11 @@ def plot_outlier_heatmap(data, args):
     print("\tCelltype outlier heatmap saved")
 
 
-def plot_marker_venn_diagram(adata, args):
+def plot_marker_venn_diagram(adata, num_classes,
+                        prp_path, exp_code, **kwargs):
     """
     Plot the venn diagram of top DE genes and top lrp genes for each cell type
     """
-    lrp_path = args.lrp_path
-    num_classes = args.num_classes
     celltypes = np.unique(adata.obs['celltype'])
     gene_names = adata.var['gene_name']
 
@@ -609,10 +759,10 @@ def plot_marker_venn_diagram(adata, args):
     # top lrp marker genes
     markers = {}
     for i in range(num_classes):
-        file1 = celltypes[i].replace("/", " OR ") + "_" + args.exp_code + "_relgenes.npy"
-        gene_rel = np.load(lrp_path + file1, allow_pickle=True)
-        df = pd.DataFrame(data = gene_rel).T
-        top_genes_indices = df.sum().nlargest(20).index
+        file1 = celltypes[i].replace("/", " OR ") + "_" + exp_code + "_relgenes.npy"
+        gene_rel = np.load(prp_path + file1, allow_pickle=True)
+        df = pd.DataFrame(data=gene_rel)
+        top_genes_indices = df.sum().nlargest(20).index.tolist()
         markers[celltypes[i]] = set(gene_names[top_genes_indices])
 
     col = 4
@@ -634,7 +784,7 @@ def plot_marker_venn_diagram(adata, args):
 
     # plt.suptitle('Overlapping Marker Gene Venn Diagram')
     plt.tight_layout()
-    plt.savefig(lrp_path + 'DE_marker_venn.png', bbox_inches='tight')
+    plt.savefig(prp_path + 'DE_marker_venn.png', bbox_inches='tight')
     plt.close()
 
     print("\tDE marker genes venn diagram saved")

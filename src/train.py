@@ -11,13 +11,13 @@ num_workers = 4 if torch.cuda.is_available() else 0
 
 
 def run_model(model, train_loader,
-            test_X, test_Y, 
-            epochs, 
+            epochs = 100, 
             lr = 1e-3, 
             optimizer = "AdamW",
             two_step = True,
             ortho_coef = 0.3,
-            enable_early_stopping = 0):
+            enable_early_stopping = 0,
+            validate_model = True, test_X = None, test_Y = None, ):
     # setup optimizer
     optimizer_specs = \
             [# layers
@@ -43,9 +43,9 @@ def run_model(model, train_loader,
 
     # setup loss coef  
     two_step_training = two_step
-    coefs = {'crs_ent': 1, 'recon': 0.8, 'kl': 1, 
+    coefs = {'crs_ent': 1, 'recon': 1, 'kl': 1, 
             'ortho': 0.0 if two_step_training else 1,
-            'atomic': 1, # 0.0 if two_step_training else 1,
+            'atomic': 0.0 if two_step_training else 1,
             }
     print('loss coef:', coefs)
     # earlystopping
@@ -70,33 +70,35 @@ def run_model(model, train_loader,
         if two_step_training:
             if epoch == epochs // 2:
                 coefs['ortho'] = ortho_coef
-                # coefs['atomic'] = 1
+                coefs['atomic'] = 1
                 step2_allowed = 1
-        # early stopping after two-step training
-        if step2_allowed and enable_early_stopping:
-            test_acc = _test_model(model = model, 
-                            input = test_X, label = test_Y,
-                            coefs = coefs,
-                            )
-            if test_acc > earlystopping:
-                earlystopping = test_acc
-            else:
-                print_results(epoch, test_acc, is_train = False)
-                print("Early stopping triggered!")
-                break
+        # # early stopping after two-step training
+        # if step2_allowed and enable_early_stopping:
+        #     test_acc = _test_model(model = model, 
+        #                     input = test_X, label = test_Y,
+        #                     coefs = coefs,
+        #                     )
+        #     if test_acc > earlystopping:
+        #         earlystopping = test_acc
+        #     else:
+        #         print_results(epoch, test_acc, is_train = False)
+        #         print("Early stopping triggered!")
+        #         break
 
         
         if (epoch % 10 == 0):
             print_results(epoch, train_acc, train_loss, train_recon, train_kl, \
                             train_ce, train_ortho, train_atomic, is_train=True)
 
-            
             # validate
-            test_acc = _test_model(model = model, 
-                                input = test_X, label = test_Y,
-                                coefs = coefs,
-                                )
-            print_results(epoch, test_acc, is_train = False)
+            if validate_model:
+                test_acc = _test_model(model = model, 
+                                    input = test_X, label = test_Y,
+                                    coefs = coefs,
+                                    )
+                print_results(epoch, test_acc, is_train = False)
+            else:
+                test_acc = []
         train_loss_list.append(train_loss)
         train_acc_list.append(train_acc)
         valid_acc_list.append(test_acc)
@@ -204,7 +206,8 @@ def load_model(model_dir, model):
     '''
     Load model from model_dir
     '''
-    model.load_state_dict(torch.load(model_dir))
+    state_dict = torch.load(model_dir, map_location=device)
+    model.load_state_dict(state_dict)
     model.eval()
     # model = torch.load(model_dir)
     # model.eval()
@@ -246,25 +249,29 @@ def get_latent(model, X):
     return latent
 
 
-def get_decode(model, Z):
+def get_latent_decode(model, Z):
     input = torch.Tensor(Z).to(device)
-    latent = model.get_decode(input).cpu().detach().numpy()
+    px_mu, px_theta = model.get_latent_decode(input)
+    px_mu = px_mu.detach().cpu().numpy()
+    px_theta = px_theta.detach().cpu().numpy()
     del input
-    return latent
+    return px_mu, px_theta
 
 
 def get_recon(model, X):
     input = torch.Tensor(X).to(device)
-    recon = model.get_recon(input).cpu().detach().numpy()
+    recon, _ = model.get_recon(input)
+    recon = recon.detach().cpu().numpy()
     del input
     return recon
 
 
 def get_prototypes(model):
-    prototypes = model.prototype_vectors.cpu().detach().numpy()
+    prototypes = model.get_prototypes.cpu().detach().numpy()
     return prototypes
 
 
 def get_prototype_cells(model):
-    prototype_cells = model.get_prototype_cells().detach().cpu().numpy()
-    prototype_cells = (prototype_cells + 1) / 2.0     # scale to [0,1]
+    proto_cells = model.get_prototype_cells()
+    proto_cells = proto_cells.detach().cpu().numpy()
+    return proto_cells

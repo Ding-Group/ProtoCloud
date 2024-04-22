@@ -6,6 +6,7 @@ import numpy as np
 import pandas as pd
 import scanpy as sc
 import anndata
+from scipy import sparse
 from sklearn.preprocessing import LabelEncoder
 from sklearn.metrics import confusion_matrix, accuracy_score, balanced_accuracy_score, classification_report
 import joblib
@@ -47,10 +48,12 @@ def save_model_dict(model_dict, model_path):
     print("model dict saved")
 
 
-def load_model_dict(model_path):
+def load_model_dict(model_path, device="cpu"):
     with open(os.path.join(model_path, 'model_dict.pkl'), 'rb') as f:
-        loaded_dict = pickle.load(f)
-    return loaded_dict
+        state_dict = pickle.load(f)
+    # path = os.path.join(model_path, 'model_dict.pkl')
+    # state_dict = torch.load(path, map_location=device)
+    return state_dict
 
 
 
@@ -76,28 +79,28 @@ def load_var_names(filename):
 
 
 
-def ordered_class(data, args):
-    """
-    Return the ordered class index for the dataset.
-    For RGC: sorted by celltype number
-    Others: sorted by similiar celltypes
-    """
-    # if args.dataset == 'RGC':
-    #     # Sort by extracting the number at the beginning of each string
-    #     sorted_label = sorted(data.cell_encoder.classes_, key=lambda x: int(x.split('_')[0]))
-    #     sorted_index = data.cell_encoder.transform(sorted_label)
-    #     return sorted_index
-    # else:
-    #     return data.cell_encoder.transform(data.cell_encoder.classes_)
-    return data.cell_encoder.transform(data.cell_encoder.classes_)
+# def ordered_class(data, args):
+#     """
+#     Return the ordered class index for the dataset.
+#     For RGC: sorted by celltype number
+#     Others: sorted by similiar celltypes
+#     """
+#     # if args.dataset == 'RGC':
+#     #     # Sort by extracting the number at the beginning of each string
+#     #     sorted_label = sorted(data.cell_encoder.classes_, key=lambda x: int(x.split('_')[0]))
+#     #     sorted_index = data.cell_encoder.transform(sorted_label)
+#     #     return sorted_index
+#     # else:
+#     #     return data.cell_encoder.transform(data.cell_encoder.classes_)
+#     return data.cell_encoder.transform(data.cell_encoder.classes_)
 
 
-def data_info_saver(info, args, file_name):
+def data_info_saver(info, model_dir, file_name, **kwargs):
     # save model-relate data info for reuse
     if file_name == 'cell_encoder':   # save label encoder
-        joblib.dump(info, os.path.join(args.model_dir, 'cell_encoder.joblib'))
+        joblib.dump(info, os.path.join(model_dir, 'cell_encoder.joblib'))
     elif file_name == 'gene_names':
-        with open(os.path.join(args.model_dir, 'gene_names.txt'), 'w') as f:
+        with open(os.path.join(model_dir, 'gene_names.txt'), 'w') as f:
             for gene in info:
                 f.write(f"{gene}\n")
     else:
@@ -115,32 +118,50 @@ def data_info_loader(file_name, model_dir):
         raise NotImplementedError()
 
 
+def all_to_coo(X):
+    """
+    Convert dense numpy array and other sparse matrix format to torch.sparse_coo Tensor
+    """
+    if not sparse.isspmatrix(X):
+        X = sparse.coo_matrix(X)
+    elif not sparse.isspmatrix_coo(X):
+        X = X.tocoo()
+    else:
+        pass
+
+    indices = torch.LongTensor([X.row, X.col])
+    values = torch.FloatTensor(X.data, dtype=torch.float32)
+    shape = torch.Size(X.shape)
+
+    pt_tensor = torch.sparse.FloatTensor(indices, values, shape)
+    return pt_tensor
+
+
 
 ### Model Settings
 #######################################################
-def get_custom_exp_code(args):
+def get_custom_exp_code(model_name, lr, epochs, batch_size, 
+                        dataset_name, topngene, split, **kwargs):
     '''
     Creates Experiment Code from argparse + Folder Name to Save Results
     model_lr_epochs_batchsize_dataset
     '''
-    param_code = args.model
-    if 'protoCloud' in args.model:
-        # ### Model Type
-        # param_code += '_p%s'%str(args.prototypes_per_class)
-        # param_code += '_l%s'%str(args.latent_dim)
-        # Learning Rate
-        param_code += '_lr%s' %format(args.lr, '.0e')
-        # Number of Epochs
-        param_code += '_e%s' %format(args.epochs, 'd')
+    param_code = model_name
+    # ### Model Type
+    # param_code += '_p%s'%str(kwargs[prototypes_per_class])
+    # param_code += '_l%s'%str(kwargs[latent_dim])
+    # Learning Rate
+    param_code += '_lr%s' %format(lr, '.0e')
+    param_code += '_e%s' %format(epochs, 'd')
     # Batch Size
-    param_code += '_b%s' % str(args.batch_size)
+    param_code += '_b%s' % str(batch_size)
 
     ### dataset
-    param_code += '_%s' % args.dataset
-    if args.topngene != None:
-        param_code += '_top%s' % str(args.topngene)
-    if args.split != None:
-        param_code += '_%s' % str(args.split)
+    if topngene != None:
+        param_code += '_top%s' % str(topngene)
+    if split != None:
+        param_code += '_%s' % str(split)
+    param_code += '_%s' % dataset_name
 
     return param_code
 
@@ -161,6 +182,7 @@ def log_likelihood_nb(x, mu, theta, eps = EPS):
 
     return ll
 
+
 def log_likelihood_normal(x, mu, logvar):
     var = torch.exp(logvar)
     ll = -0.5 * len(x) * torch.log(2 * math.pi * var) \
@@ -172,11 +194,6 @@ def log_likelihood_normal(x, mu, logvar):
 
 ### Results
 #######################################################
-def print_model(model):
-    print(model)
-    print("Number of parameters: ", sum(p.numel() for p in model.parameters() if p.requires_grad))
-
-
 def save_model(model, model_dir, exp_code, accu=None, log=print):
     # save model to model_dir with name exp_code + accu
     save_path = os.path.join(model_dir, (exp_code + '.pth'))
@@ -256,10 +273,10 @@ def model_metrics(predicted):
 
 
 
-def save_file(results, args, file_ending, save_dir=None):
-    # results_dir, exp_code
+def save_file(results, save_dir=None, exp_code=None, file_ending=None, save_path=None, **kwargs):
+    # args.results_dir, args.exp_code
     """
-    Save the prediction results to result dir.
+    Save the results to save dir or save path
     Args:
         results:
             (AnnData) AnnData object containing actual and predicted labels
@@ -268,10 +285,8 @@ def save_file(results, args, file_ending, save_dir=None):
                 col_names: 'celltype', 'predicted_labels'
             OR (tuple) (misclass_rate, rep, cm)
     """
-    if save_dir is None:
-        save_path = os.path.join(args.results_dir, args.exp_code + file_ending)
-    else:
-        save_path = save_dir + args.exp_code + file_ending
+    if save_path is None:
+        save_path = save_dir + exp_code + file_ending
 
     if isinstance(results, anndata.AnnData):
         results.write(save_path)
@@ -286,10 +301,9 @@ def save_file(results, args, file_ending, save_dir=None):
     # print("Saved results")
 
 
-def load_file(args, file_ending=None, path=None):
-    # results_dir, exp_code
+def load_file(results_dir, exp_code=None, file_ending=None, path=None, **kwargs):
     if path is None:
-        file_path = os.path.join(args.results_dir, args.exp_code + file_ending)
+        file_path = os.path.join(results_dir, exp_code + file_ending)
     else:
         file_path = path
     
@@ -306,4 +320,24 @@ def load_file(args, file_ending=None, path=None):
         raise FileNotFoundError(file_path + " not found")
 
 
+### Plot
+#######################################################
+def mutual_genes(list1, list2, mutually_exclusive=True):
+    """
+    Get non-overlapping list with order retained
+    """
+    if mutually_exclusive:
+        ul1 = [i for i in list1 if i not in list2]
+        ul2 = [i for i in list2 if i not in list1]
+        return ul1 + ul2
+    else:
+        ul2 = [i for i in list2 if i not in list1]
+        return list1 + ul2
 
+
+def minmax_scale_matrix(matrix_np):
+    row_mins = matrix_np.min(axis=1, keepdims=True)
+    row_maxs = matrix_np.max(axis=1, keepdims=True)
+    
+    scaled_matrix = (matrix_np - row_mins) / (row_maxs - row_mins)
+    return scaled_matrix
