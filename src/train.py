@@ -43,11 +43,7 @@ def run_model(model, train_loader,
 
     # setup loss coef  
     two_step_training = two_step
-<<<<<<< HEAD
     coefs = {'crs_ent': 1, 'recon': 1, 'kl': 1, 
-=======
-    coefs = {'crs_ent': 1, 'recon': 10, 'kl': 1,
->>>>>>> 9cd955da7321a394d365d048d2c33abcc081eeab
             'ortho': 0.0 if two_step_training else 1,
             'atomic': 0.0 if two_step_training else 1,
             }
