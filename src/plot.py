@@ -694,7 +694,7 @@ def plot_top_gene_PRP_dotplot(celltypes, gene_names, num_classes,
                     **kwargs):
     num_protos = prototypes_per_class if num_protos > prototypes_per_class else num_protos
     prp_path = results_dir + "prp/"
-    filename = exp_code + "_relgenes.npy"
+    filename = '_' + exp_code + "_relgenes.npy"
 
     # Identify top k genes from each class
     all_rel = []
