@@ -89,8 +89,8 @@ def main(args):
 
         args.input_dim = model_dict["input_dim"]
         args.num_classes = model_dict["num_classes"]
-        args.num_prototypes = model_dict["num_prototypes"]
         args.prototypes_per_class = model_dict["num_prototypes_per_class"]
+        args.num_prototypes = args.prototypes_per_class * args.num_classes
         
         model = protoCloud(**model_dict).to(device)
         load_model(args.pretrain_model_pth, model)
@@ -113,13 +113,13 @@ def main(args):
             test_y = torch.LongTensor(data.cell_encoder.transform(test_Y))
             result_trend = run_model(model, train_loader,
                                     args.epochs, args.lr, args.optimizer,
-                                    args.two_step, args.ortho_coef,
+                                    args.two_step, args.recon_coef, args.ortho_coef,
                                     test_X = test_X, test_Y = test_y, 
                                     )
         else:
             result_trend = run_model(model, train_loader,
                         args.epochs, args.lr, args.optimizer,
-                        args.two_step, args.ortho_coef,
+                        args.two_step, args.recon_coef, args.ortho_coef,
                         validate_model = False,
                         )
 
@@ -144,7 +144,7 @@ def main(args):
     args_dict = vars(args)
     if args.model_mode != 'plot':
         predicted, _ = get_predictions(model, test_X, False if args.model_mode == 'apply' else True)
-        # predicted['celltype'] = test_Y
+
         if args.pretrain_model_pth is not None:
             model_encoder = data_info_loader('cell_encoder', os.path.dirname(args.pretrain_model_pth))
         else:
@@ -159,28 +159,24 @@ def main(args):
             pass
         else:
             predicted['label'] = test_Y
+        
         predicted = pd.DataFrame(predicted)
         save_file(predicted, args.results_dir, args.exp_code, '_pred.csv')
         print("\nPredictions saved")
 
+
         if args.save_file:
             if model.obs_dist == 'nb' and test_Y is not None:
                 try:
-                    # might fail due to unseen cell type
-                    test_y = model_encoder.transform(test_Y)
                     # log-likelihood
                     ll = model.get_log_likelihood(torch.tensor(test_X[:1000]).to(device), 
-                                                torch.tensor(test_y[:1000]).to(device)).detach().cpu().numpy()
+                                                torch.tensor(predicted['idx1'][:1000]).to(device)).detach().cpu().numpy()
                     save_file(ll, args.results_dir, args.exp_code, '_ll.npy')
                     print("Avg log-likelihood: ", np.mean(ll))
                     plot_cell_likelihoods(args, ll)
                 except Exception as e:
                     print(e)
 
-            # if test_Y is not None:
-            #     # misclass_rate, rep, cm
-            #     results = model_metrics(predicted)
-            #     save_file(results, args.results_dir, args.exp_code, '_metrics.npy')
 
             latent = get_latent(model, test_X)
             save_file(latent, args.results_dir, args.exp_code, '_latent.npy')
@@ -280,12 +276,15 @@ def main(args):
     if args.plot_prp:
         print("Ploting PRP visulization")
         plot_prp_dist(data.cell_encoder.classes_, data.gene_names, **args_dict)
+        plot_marker_venn_diagram(data.adata, **args_dict)
+        plot_top_gene_PRP_dotplot(data.cell_encoder.classes_, data.gene_names, 
+                                num_protos = 1, top_num_genes = 10, 
+                                celltype_specific = True, save_markers = False, **args_dict)
     if args.plot_lrp:
         print("Ploting LRP visulization")
         plot_lrp_dist(data.cell_encoder.classes_, data.gene_names, **args_dict)
-        plot_top_gene_heatmap(data.cell_encoder.classes_, data.gene_names, **args_dict)
-        # plot_outlier_heatmap(data.cell_encoder.classes_, data.gene_names, **args_dict)
-        plot_marker_venn_diagram(data.adata, **args_dict)
+
+
     
 
     print("Finished!")
@@ -331,7 +330,8 @@ parser.add_argument('--nb_dispersion',  type = str, default = 'celltype_target',
 # Optimizer Parameters + Survival Loss Function
 parser.add_argument('--two_step',    type = int, default = 1, choices = [0, 1], help = 'use two-step training or not')
 parser.add_argument('--early_stopping', type = int, default = 0, choices = [0, 1], help = 'use early stopping training or not')
-parser.add_argument('--ortho_coef',  type = float, default = 0.3, help = 'orthogonality_loss coefficient')
+parser.add_argument('--recon_coef',  type = float, default = 1, help = 'reconstruction loss coefficient')
+parser.add_argument('--ortho_coef',  type = float, default = 0.3, help = 'orthogonality loss coefficient')
 parser.add_argument('--activation',  type = str, default = 'relu', choices = ['relu'])
 parser.add_argument('--use_bias',      type = int, default = 0, choices = [0, 1])
 parser.add_argument('--use_dropout',      type = float, default = 0.0)
@@ -406,6 +406,8 @@ if args.model_mode in ["apply"]:
     args.plot_trend = 0
     args.protocorr = 0
     args.prp = 0
+    args.lrp = 0 if args.pretrain_model_pth is not None else args.lrp
+        
 
 args.lrp_path = args.results_dir + 'lrp/'
 args.prp_path = args.results_dir + 'prp/'
@@ -423,9 +425,12 @@ if args.lrp:
 
 print('------args---------')
 print(args)
-
+with open(args.results_dir + 'args.pkl', 'wb') as f:
+    pickle.dump(args, f)
+print("Args dict saved")
 
 
 if __name__ == '__main__':
     main(args)
     print("end script\n\n\n\n\n\n")
+    exit()

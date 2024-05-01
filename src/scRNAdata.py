@@ -381,6 +381,8 @@ class scRNAData():
 
         train_Y = self.celltypes[train_idx]
         test_Y = self.celltypes[test_idx]
+
+        # if training new model
         if self.cell_encoder is None:
             _, self.cell_encoder = self._label_encoder(np.unique(train_Y))
         train_Y = self.cell_encoder.transform(train_Y)
@@ -620,12 +622,12 @@ class scRNAData():
         print("number of genes in loaded model: ", len(model_genes))
 
         # get shared genes
-        share_genes = [gene for gene in self.gene_names if gene in model_genes]
-        # import collections
-        # share_genes = list((collections.Counter(model_genes) & collections.Counter(self.gene_names)).elements())
+        share_genes = [gene for gene in model_genes if gene in self.gene_names]
+        print(len(share_genes), len(np.unique(share_genes)))
         print("\tShared genes in loaded model: %.2f%%"%(len(share_genes) / len(model_genes)*100))
         print("\tShared genes in new dataset: %.2f%%"%(len(share_genes) / len(self.gene_names)*100))
         gene_mask = [True if i in share_genes else False for i in model_genes]
+        print(np.sum(gene_mask))
         # var_indices = [self.gene_names.get_loc(gene) for gene in share_genes]
         var_indices = [np.where(self.gene_names == gene)[0][0] \
                         for gene in share_genes if (self.gene_names == gene).any()]
@@ -643,9 +645,11 @@ class scRNAData():
         new_adata.obs = self.adata.obs.copy()
         new_adata.var['gene_name']  = model_genes
         new_adata.var.index = new_adata.var['gene_name']
+        print(new_adata)
 
         self.adata = new_adata
         self.gene_names = self.adata.var["gene_name"].tolist()
+        self.cell_encoder = data_info_loader('cell_encoder', os.path.dirname(pretrain_model_pth))
 
 
     def use_pred_label(self, pretrain_model_pth, results_dir, exp_code,
@@ -674,7 +678,7 @@ class scRNAData():
         # self.X = self.adata.X
         self.cell_encoder = data_info_loader('cell_encoder', os.path.dirname(pretrain_model_pth))
         # self.celltype = self.cell_encoder.transform(predicted['idx1'].values)
-        self.celltypes = predicted['idx1'].values
+        self.celltypes = predicted['pred1'].values
         print(self.cell_encoder.classes_)
         print("Using predicted label from pretrained model")
         
@@ -691,14 +695,25 @@ class scRNAData():
 
         return train_idx, test_idx 
 
+
     @staticmethod
     def _resize_and_fill(orig, new_shape, gene_mask, var_indices):
+        print(new_shape, len(gene_mask), len(var_indices))
         new_matrix = csr_matrix(new_shape, dtype=orig.dtype)
         new_matrix[:, np.where(gene_mask)[0]] = orig[:, var_indices]
-        # for i, mask in enumerate(gene_mask):
-        #     if mask:
-        #         new_matrix[:, i] = orig[:, var_indices[i]]
+
         return new_matrix
+
+    # @staticmethod
+    # def _resize_and_fill(orig, new_shape, gene_mask, var_indices):
+    #     print(new_shape, len(gene_mask), len(var_indices))
+        
+    #     new_data = np.zeros(new_shape, dtype=orig.dtype)
+    #     orig_dense = orig.todense() if sparse.issparse(orig) else orig
+    #     new_data[:, np.where(gene_mask)[0]] = orig_dense[:, var_indices]
+    #     new_matrix = csr_matrix(new_data)
+
+    #     return new_matrix
 
 
 

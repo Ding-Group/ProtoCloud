@@ -238,19 +238,21 @@ def generate_PRP_explanations(model,    # model_wrapped
 
     proto_count = 0
     for c in range(num_classes):
-        print("\tClass: ", cell_types[c])
-        idx = np.where(train_Y == c)[0]
-        class_prp = []
-        # for each class, get the PRP genes of each prototype
-        for pno in range(prototypes_per_class):
-            rel_mean = x_prp(model, train_X[idx, :], 
-                            prototypes[proto_count+pno, :], epsilon)
-            class_prp.append(rel_mean)
-        proto_count += prototypes_per_class
-        class_prp = np.stack(class_prp, axis = 0)     # (n_prototypes, n_genes)
-        # save celltype corresponding PRP genes
-        path = prp_path + cell_types[c].replace("/", " OR ") + '_'
-        save_file(class_prp, path, exp_code, "_relgenes")
+        try:
+            idx = np.where(train_Y == c)[0]
+            class_prp = []
+            # for each class, get the PRP genes of each prototype
+            for pno in range(prototypes_per_class):
+                rel_mean = x_prp(model, train_X[idx, :], 
+                                prototypes[proto_count+pno, :], epsilon)
+                class_prp.append(rel_mean)
+            proto_count += prototypes_per_class
+            class_prp = np.stack(class_prp, axis = 0)     # (n_prototypes, n_genes)
+            # save celltype corresponding PRP genes
+            path = prp_path + cell_types[c].replace("/", " OR ") + '_'
+            save_file(class_prp, path, exp_code, "_relgenes")
+        except Exception as e:
+            print(f"Error in generate LRP for {cell_types[c]}: {e}")
         
     print("Saved PRP genes for each class")
 
@@ -265,20 +267,21 @@ def generate_LRP_explanations(model,    # model_wrapped
     print("Generating LRP explainations:")
 
     for c in cell_types:
-        print("\tClass: ", c)
+        try:
+            idx = np.where(test_Y == c)[0]
+            # save celltype corresponding LRP genes
+            rel = x_lrp(model, test_X[idx, :])   # [n, 3346]
+            path = lrp_path + c.replace("/", " OR ") + '_'
+            save_file(rel, path, exp_code, "_lrp")
+            rel_sum = np.sum(rel, axis = 0)   # [1, 3346]
+            path = lrp_path + c.replace("/", " OR ") + '_'
+            save_file(rel_sum, path, exp_code, "_relgenes")
 
-        idx = np.where(test_Y == c)[0]
-        # save celltype corresponding LRP genes
-        rel = x_lrp(model, test_X[idx, :])   # [n, 3346]
-        path = lrp_path + c.replace("/", " OR ") + '_'
-        save_file(rel, path, exp_code, "_lrp")
-        rel_sum = np.sum(rel, axis = 0)   # [1, 3346]
-        path = lrp_path + c.replace("/", " OR ") + '_'
-        save_file(rel_sum, path, exp_code, "_relgenes")
-
-        # save celltype corresponding recon latents
-        rel_sum = z_recon(model, test_X[idx, :])
-        save_file(rel_sum, path, exp_code, "_latents")
+            # save celltype corresponding recon latents
+            rel_sum = z_recon(model, test_X[idx, :])
+            save_file(rel_sum, path, exp_code, "_latents")
+        except Exception as e:
+            print(f"Error in generate LRP for {cell_types[c]}: {e}")
         
     print("Saved LRP genes for each class")
         

@@ -15,6 +15,7 @@ def run_model(model, train_loader,
             lr = 1e-3, 
             optimizer = "AdamW",
             two_step = True,
+            recon_coef = 1, 
             ortho_coef = 0.3,
             enable_early_stopping = 0,
             validate_model = True, test_X = None, test_Y = None, ):
@@ -22,7 +23,7 @@ def run_model(model, train_loader,
     optimizer_specs = \
             [# layers
              {'params': model.encoder.parameters(), 'lr': lr, 'weight_decay': 0.005},
-             {'params': model.decoder.parameters(), 'lr':lr, 'weight_decay': 0.005},
+             {'params': model.decoder.parameters(), 'lr':lr, 'weight_decay': 0},
              {'params': model.z_mean.parameters(), 'lr': lr, 'weight_decay': 0},
              {'params': model.z_log_var.parameters(), 'lr': lr, 'weight_decay': 0},
              {'params': model.px_mean.parameters(), 'lr': lr, 'weight_decay': 0},
@@ -43,7 +44,7 @@ def run_model(model, train_loader,
 
     # setup loss coef  
     two_step_training = two_step
-    coefs = {'crs_ent': 1, 'recon': 1, 'kl': 1, 
+    coefs = {'crs_ent': 1, 'recon': recon_coef, 'kl': 1, 
             'ortho': 0.0 if two_step_training else 1,
             'atomic': 0.0 if two_step_training else 1,
             }
@@ -197,7 +198,7 @@ def _test_model(model, input, label, coefs):
     return test_acc#, loss.item()
 
 
-def freeze_modules():
+def freeze_modules(model):
     for param in model.parameters():
         param.requires_grad = False
 

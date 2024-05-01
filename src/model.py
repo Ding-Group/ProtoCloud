@@ -138,7 +138,7 @@ class protoCloud(nn.Module):
         self.lib_size = torch.sum(x, 1, True)
 
         if self.raw_input:     # raw: 1
-            x = torch.log(x + 1)
+            x = torch.log1p(x)
 
         encode = self.encoder(x)
         z_mu = self.z_mean(encode)
@@ -305,7 +305,7 @@ class protoCloud(nn.Module):
     def atomic_loss(self, sim_scores, mask):
         attraction = torch.mean(torch.max(sim_scores * mask, 1).values)
         repulsion = torch.mean(torch.max(sim_scores * torch.logical_not(mask), 1).values)
-        # repulsion = torch.sum(torch.mean(sim_scores * torch.logical_not(mask), 1))
+        # repulsion = torch.sum(torch.mean(sim_scores * torch.logical_not(mask), 1).values)
         return repulsion - attraction
 
 
@@ -381,16 +381,16 @@ class protoCloud(nn.Module):
         for i in range(self.num_classes):
             x_mu = px_mu[i*self.num_prototypes_per_class : (i+1)*self.num_prototypes_per_class, :]
             for j in range(self.num_prototypes_per_class):
-                t = px_t[:,i]
+                t = px_theta[:,i]
                 mu = x_mu[j]
-                proto_cells[i*self.num_prototypes_per_class + j, :] = torch.mean(model.sample_recon(mu, t, 100), axis=0)
+                proto_cells[i*self.num_prototypes_per_class + j, :] = torch.mean(self.sample_recon(mu, t, 100), axis=0)
         return proto_cells
 
 
     def get_pred(self, x, test = False):
         self.eval()
         if self.raw_input:     # raw: 1
-            x = torch.log(x + 1)
+            x = torch.log1p(x)
 
         encode = self.encoder(x)
         z_mu = self.z_mean(encode)
@@ -409,7 +409,7 @@ class protoCloud(nn.Module):
     def get_latent(self, x):
         self.eval()
         if self.raw_input:
-            x = torch.log(x + 1)
+            x = torch.log1p(x)
         encode = self.encoder(x)
         z_mu = self.z_mean(encode)
 
@@ -441,7 +441,7 @@ class protoCloud(nn.Module):
     def get_recon(self, x):
         self.eval()
         if self.raw_input:     # raw: 1
-            x = torch.log(x + 1)
+            x = torch.log1p(x)
 
         encode = self.encoder(x)
         z_mu = self.z_mean(encode)

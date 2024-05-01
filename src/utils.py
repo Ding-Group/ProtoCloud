@@ -9,6 +9,8 @@ import anndata
 from scipy import sparse
 from sklearn.preprocessing import LabelEncoder
 from sklearn.metrics import confusion_matrix, accuracy_score, balanced_accuracy_score, classification_report
+from matplotlib import pyplot as plt
+import seaborn as sns
 import joblib
 
 import src.glo as glo
@@ -225,7 +227,6 @@ def save_model_w_condition(model, model_dir, exp_code, accu, target_accu, log=pr
 
 def save_prototype_cells(model, result_dir, exp_code):
     prototype_cells = model.get_prototype_cells().detach().cpu().numpy()
-    prototype_cells = (prototype_cells + 1) / 2.0     # scale to [0,1]
     protoCell_dir = os.path.join(result_dir, exp_code + '_protoCells.npy')
 
     np.save(protoCell_dir, prototype_cells)
@@ -322,17 +323,39 @@ def load_file(results_dir, exp_code=None, file_ending=None, path=None, **kwargs)
 
 ### Plot
 #######################################################
-def mutual_genes(list1, list2, mutually_exclusive=True):
-    """
-    Get non-overlapping list with order retained
-    """
-    if mutually_exclusive:
+def mutual_genes(list1, list2, celltype_specific=True):
+    if celltype_specific:
         ul1 = [i for i in list1 if i not in list2]
         ul2 = [i for i in list2 if i not in list1]
         return ul1 + ul2
     else:
         ul2 = [i for i in list2 if i not in list1]
         return list1 + ul2
+
+
+def get_avg_expression(adata, marker_genes):
+    shared_markers = [gene for gene in marker_genes if gene in adata.var['gene_name']]
+    print("shared_markers:", len(shared_markers))
+    
+    return shared_markers
+
+
+def get_dotplot(adata, marker_genes, groupby='celltype', celltype_order=None, path=None):
+    with plt.rc_context():  # Use this to set figure params like size and dpi
+        sc.pl.dotplot(adata, 
+                      marker_genes,
+                      groupby = groupby,
+                      gene_symbols = "gene_name",
+                      categories_order = celltype_order,
+                      standard_scale="var",
+                      cmap='Blues',
+                      show = False if path is not None else True,
+                     )
+        if path is not None:
+            plt.savefig(path, bbox_inches="tight")
+            plt.close()
+        else:
+            plt.show()
 
 
 def minmax_scale_matrix(matrix_np):

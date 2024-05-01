@@ -81,48 +81,64 @@ def plot_confusion_matrix(args):
     orig_y = predicted['label']
     pred_y = predicted['pred1']
 
-    unique_types = np.unique(np.concatenate((orig_y, pred_y)))
-    cm = confusion_matrix(orig_y, pred_y, labels = unique_types)
-    rep = classification_report(orig_y, pred_y, output_dict = True)
-    macro_f1 = rep["macro avg"]["f1-score"]
-    total_count = np.sum(cm, axis = 1)
-    accuracy = np.trace(cm) / np.sum(cm)
+    # same labels
+    if args.pretrain_model_pth is None:
+        celltype_order = np.unique(pred_y)
+        cm = confusion_matrix(orig_y, pred_y, labels = celltype_order)
+        rep = classification_report(orig_y, pred_y, output_dict = True)
+        macro_f1 = rep["macro avg"]["f1-score"]
+        total_count = np.sum(cm, axis = 1)
+        accuracy = np.trace(cm) / np.sum(cm)
+        print('Accuracy={:0.3f}; Macro F1={:0.3f}'.format(accuracy, macro_f1))
 
-    cm = cm.astype('float') / (cm.sum(axis = 1)[:, np.newaxis] + EPS) # normalize
-    cm = pd.DataFrame(cm, index = unique_types, columns = unique_types)
-    cm["Total Count"] = total_count # add total count column
+        cm = cm.astype('float') / (cm.sum(axis = 1)[:, np.newaxis] + EPS) * 100
+        cm = pd.DataFrame(cm, index = celltype_order, columns = celltype_order)
+        cm["Total Count"] = total_count # add total count column
+        # n = 15 if len(celltype_order) >= 15 else 8
+        # figsize = (n,n)
+    
+    # different labels
+    else:
+        model_labels = np.unique(pred_y)
+        data_labels = np.unique(orig_y)
+
+        mapping = pd.DataFrame(0, index=data_labels, columns=model_labels)
+        for o in data_labels:
+            mapping.loc[o] = predicted[predicted['label'] == o]['pred1'].value_counts()
+        mapping.fillna(0, inplace=True)
+
+        total_count = mapping.sum(axis = 1)
+        cm = mapping / (mapping.sum(axis = 0) + EPS) * 100
+        cm["Total Count"] = total_count
+        
 
     # plot
-    n = 15 if len(unique_types) >= 15 else 8
-    f, ax = plt.subplots(1, 1, figsize = (n,n))
-
     sns.heatmap(cm, 
         annot=True,
         vmin = 0,
-        vmax = 1,
+        vmax = 100,
         fmt='.2f',
         cmap = "Blues",
         square=True,
-        yticklabels=unique_types,
         linewidths = 0.5,
         cbar=False,
-        annot_kws={"size": 35 / np.sqrt(len(unique_types))},
         )
 
-    label_x = ax.get_xticklabels()
-    plt.setp(label_x, rotation=45, horizontalalignment='right')
+    # label_x = ax.get_xticklabels()
+    # plt.setp(label_x, rotation=45, horizontalalignment='right')
     # title = " ".join([args.model_name, 'Confusion Matrix on', args.dataset_name])
     # plt.title(title, fontsize = 20)
 
     plt.tight_layout()
-    plt.ylabel('True label', fontsize = 16)
-    plt.xlabel('Predicted label\naccuracy={:0.3f}; Macro F1={:0.3f}'.format(accuracy, macro_f1), fontsize = 16)
+    plt.ylabel('Data label')
+    plt.xlabel('Predicted label')
+    # plt.xlabel('Predicted label\naccuracy={:0.3f}; Macro F1={:0.3f}'.format(accuracy, macro_f1))
 
     # plt.show()
     plt.savefig(args.plot_dir + args.exp_code + '_cm.png', bbox_inches='tight')
     plt.close()
     print("\tConfusion matrix saved")
-    print('Accuracy={:0.3f}; Macro F1={:0.3f}'.format(accuracy, macro_f1))
+    
 
 
 
@@ -565,7 +581,11 @@ def plot_prp_dist(celltypes, gene_names,
 
     for i in range(num_classes):
         file1 = celltypes[i].replace("/", " OR ") + filename
-        proto_rel = np.load(prp_path + file1, allow_pickle = True)
+        if os.path.exists(prp_path + file1):
+            proto_rel = np.load(prp_path + file1, allow_pickle = True)
+        else:
+            print(f"\t{prp_path + file1} does not exist.")
+            continue
 
         # Create a figure with 6 subplots (one for each prototype) in one row
         fig, axes = plt.subplots(prototypes_per_class, 1, 
@@ -614,11 +634,13 @@ def plot_lrp_dist(celltypes, gene_names, num_classes, lrp_path, exp_code, **kwar
 
     df_top_genes = pd.DataFrame()
 
-    # Open the file in write mode and create/overwrite the existing file
-    # with open(lrp_path+exp_code+'_LRPgenes.txt', 'w') as file:
     for i in range(num_classes):
         file1 = celltypes[i].replace("/", " OR ") + filename
-        gene_rel = np.load(lrp_path + file1, allow_pickle = True) # genes
+        if os.path.exists(lrp_path + file1):
+            gene_rel = np.load(lrp_path + file1, allow_pickle = True)
+        else:
+            print(f"\t{lrp_path + file1} does not exist.")
+            continue
 
         plt.figure(figsize = (20, 5))
         plt.plot(list(range(0, len(gene_rel))), gene_rel)
@@ -635,11 +657,11 @@ def plot_lrp_dist(celltypes, gene_names, num_classes, lrp_path, exp_code, **kwar
 
         # Adding annotation on top of the bars in the graph
         for j, value in enumerate(top_genes_indices):
-            plt.annotate(top_genes[j], # this is the text
-                        (value, gene_rel[value]), # this is the point to label
-                        textcoords="offset points", # how to position the text
-                        xytext = (0, 10), # distance from text to points (x,y)
-                        ha='center', # horizontal alignment can be left, right or center
+            plt.annotate(top_genes[j],
+                        (value, gene_rel[value]),
+                        textcoords="offset points",
+                        xytext = (0, 10),
+                        ha='center',
                         fontsize = 14)
         
         ax = plt.gca()
@@ -654,9 +676,6 @@ def plot_lrp_dist(celltypes, gene_names, num_classes, lrp_path, exp_code, **kwar
         df = pd.DataFrame(data = gene_rel).T
         top_genes_indices = df.sum().nlargest(50).index.tolist()
         top_genes = gene_names[top_genes_indices].tolist()
-        # file.write(celltypes[i] + "\n")
-        # [file.write(item + '\t') for item in top_genes]
-        # file.write('\n')
         df_top_genes = pd.concat([df_top_genes, pd.Series(top_genes, name = celltypes[i])], axis = 0)
 
     # Save DataFrame to csv
@@ -665,46 +684,81 @@ def plot_lrp_dist(celltypes, gene_names, num_classes, lrp_path, exp_code, **kwar
         
 
 
-def plot_top_gene_heatmap(celltypes, gene_names,
-                        num_classes,
-                        lrp_path, exp_code, **kwargs):
-    """
-    Plot the heatmap of top lrp genes across all cell type
-    """
-    filename = '_' + exp_code + '_relgenes.npy'
+def plot_top_gene_PRP_dotplot(celltypes, gene_names, num_classes,
+                    prototypes_per_class, 
+                    results_dir, exp_code,
+                    num_protos:int = 1,
+                    top_num_genes:int = 10,   # num of top rel genes from each class
+                    celltype_specific = True, # True: non-overlapping top rel genes
+                    save_markers = False, # save top rel markers
+                    **kwargs):
+    num_protos = prototypes_per_class if num_protos > prototypes_per_class else num_protos
+    prp_path = results_dir + "prp/"
+    filename = exp_code + "_relgenes.npy"
 
-    all_marker_idx = []
-    for i in range(num_classes):
-        file1 = celltypes[i].replace("/", " OR ") + filename
-        gene_rel = np.load(lrp_path + file1, allow_pickle = True) # genes
-        
-        df = pd.DataFrame(data = gene_rel).T
-        all_marker_idx += df.sum().nlargest(20).index.tolist()
-
-    all_marker_idx = list(set(all_marker_idx))
-
-    marker_value = []
-    for i in range(num_classes):
-        file1 = celltypes[i].replace("/", " OR ") + filename
-        gene_rel = np.load(lrp_path + file1, allow_pickle = True) # genes
-        marker_value.append(gene_rel[all_marker_idx])
-
-    all_marker_df = pd.DataFrame(marker_value, index = celltypes, columns = gene_names[all_marker_idx])
-
-    plt.figure(figsize = (len(all_marker_idx) // 6, num_classes // 3))
-    ax = sns.heatmap(all_marker_df,
-            linewidths = 0.5,
-            cmap = "Blues_r")
+    # Identify top k genes from each class
+    all_rel = []
+    top_genes = []
+    for i in range(len(celltypes)):
+        proto_rel = np.load(prp_path + celltypes[i].replace("/", " OR ") + filename, allow_pickle=True)
+        cls_top_genes = []
+        for p in range(num_protos):
+            gene_rel = proto_rel[p, :]
+            df = pd.DataFrame(data=gene_rel).T
+            tgi = df.sum().nlargest(top_num_genes).index.tolist()
+            cls_top_genes = mutual_genes(cls_top_genes, gene_names[tgi].tolist(), False)
+            all_rel.append(gene_rel)
+        top_genes = mutual_genes(top_genes, cls_top_genes, celltype_specific)
+    all_rel = np.stack(all_rel, axis = 0) 
+    print(len(top_genes), all_rel.shape)
+    if len(top_genes) == 0:
+        print("No cell-type specific marker found")
+        return
     
-    plt.xlabel('Gene Name', fontsize = 14)
-    plt.ylabel('Cell Types', fontsize = 14)
-    # title = "Cell Type - Marker Gene Heatmap"
-    # plt.title(title, fontsize = 20)
-    plt.tight_layout()
+    if save_markers:
+        if celltype_specific:
+            filename = results_dir + exp_code+ "_novel_markers.txt"
+        else:
+            filename = results_dir + exp_code + "_novel_markers_full.txt"
+        with open(filename, 'w') as file:
+            for item in top_genes:
+                file.write(f"{item}\n")
+        print(f"\tTop rel genes saved to {filename}")
+    
+    
+    all_rel = minmax_scale_matrix(all_rel)
+    
+    lrp = anndata.AnnData(X=all_rel)
+    lrp.var["gene_name"] = gene_names
+    lrp.var_names = gene_names
+    if num_protos != 1:
+        lrp.obs['row'] = [f"{x}_{i+1}" for x in celltypes for i in range(num_protos)]
+    else:
+        lrp.obs['row'] = celltypes
+    lrp.var.index = gene_names
+    
+    
+    file_path = prp_path + exp_code + "_celltype_order.txt"
+    if os.path.exists(file_path):
+        celltype_order = pd.read_csv(file_path, header=None).iloc[:,0].tolist()
+        if num_protos != 1:
+            orders = [f"{x}_{i+1}" for x in celltype_order for i in range(num_protos)]
+        else:
+            orders = [gene for gene in celltype_order if gene in lrp.obs['row'].values]
+        # print("shared_celltypes:", len(orders))
+    else:
+        orders = None
+    
+    if num_protos == 1:
+        if celltype_specific:
+            path = results_dir + "plots/" + exp_code + "_PRP_dotplot.png"
+        else:
+            path = results_dir + "plots/" + exp_code + "_PRP_dotplot_full.png"
+    else:
+        path = results_dir + "plots/" + exp_code + "_PRP_L_dotplot.png"
+    get_dotplot(lrp[:,top_genes], top_genes, groupby="row", celltype_order=orders, path=path)
+    print("\tTop rel genes PRP dotplot saved")
 
-    plt.savefig(lrp_path + 'celltype_markergene_heatmap.png', bbox_inches='tight')
-    plt.close()
-    print("\tCell type - marker gene heatmap saved")
 
 
 def plot_outlier_heatmap(celltypes, gene_names,
@@ -745,16 +799,16 @@ def plot_outlier_heatmap(celltypes, gene_names,
 def plot_marker_venn_diagram(adata, num_classes,
                         prp_path, exp_code, **kwargs):
     """
-    Plot the venn diagram of top DE genes and top lrp genes for each cell type
+    Plot the venn diagram of top HVG and top prp genes for each cell type
     """
     celltypes = np.unique(adata.obs['celltype'])
     gene_names = adata.var['gene_name']
 
-    # top DE genes
+    # top HVG genes
     sc.pp.log1p(adata)
     adata.uns['log1p']["base"] = None
     sc.tl.rank_genes_groups(adata, groupby = 'celltype', use_raw = False, n_genes = 50, method = 'wilcoxon')
-    top_de_genes = adata.uns['rank_genes_groups']['names']
+    top_HVG = adata.uns['rank_genes_groups']['names']
 
     # top lrp marker genes
     markers = {}
@@ -772,8 +826,8 @@ def plot_marker_venn_diagram(adata, num_classes,
     # Iterate over each subplot
     for i in range(num_classes):
         ax = axs[i // col][i % col]
-        venn2([markers[celltypes[i]], set(top_de_genes[celltypes[i]])],
-            set_labels = ('Marker Genes', 'DE Genes'),
+        venn2([markers[celltypes[i]], set(top_HVG[celltypes[i]])],
+            set_labels = ('Relevant Genes', 'HVG'),
             set_colors = ('purple', 'skyblue'),
             ax = ax)
         ax.set_title(celltypes[i])
