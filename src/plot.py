@@ -121,7 +121,7 @@ def plot_confusion_matrix(args):
         vmax = 100,
         fmt='.0f',
         cmap = "Blues",
-        square=True if mapping.shape[0] == mapping.shape[1] else False,
+        square=True if (cm.shape[0] == cm.shape[1]-1) else False,
         linewidths = 0.5,
         cbar=False,
         )
