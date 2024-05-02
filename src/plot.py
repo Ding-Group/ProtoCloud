@@ -94,8 +94,7 @@ def plot_confusion_matrix(args):
         cm = cm.astype('float') / (cm.sum(axis = 1)[:, np.newaxis] + EPS) * 100
         cm = pd.DataFrame(cm, index = celltype_order, columns = celltype_order)
         cm["Total Count"] = total_count # add total count column
-        # n = 15 if len(celltype_order) >= 15 else 8
-        # figsize = (n,n)
+
     
     # different labels
     else:
@@ -113,26 +112,31 @@ def plot_confusion_matrix(args):
         
 
     # plot
+    figsize = (cm.shape[1]/3 + 3, cm.shape[0]/3 + 4)
+    f, ax = plt.subplots(1, 1, figsize = figsize)
     sns.heatmap(cm, 
         annot=True,
+        annot_kws={"fontsize":7},
         vmin = 0,
         vmax = 100,
-        fmt='.2f',
+        fmt='.0f',
         cmap = "Blues",
-        square=True,
+        square=True if mapping.shape[0] == mapping.shape[1] else False,
         linewidths = 0.5,
         cbar=False,
         )
 
-    # label_x = ax.get_xticklabels()
-    # plt.setp(label_x, rotation=45, horizontalalignment='right')
+    label_x = ax.get_xticklabels()
+    plt.setp(label_x, rotation=45, horizontalalignment='right')
     # title = " ".join([args.model_name, 'Confusion Matrix on', args.dataset_name])
     # plt.title(title, fontsize = 20)
 
     plt.tight_layout()
     plt.ylabel('Data label')
-    plt.xlabel('Predicted label')
-    # plt.xlabel('Predicted label\naccuracy={:0.3f}; Macro F1={:0.3f}'.format(accuracy, macro_f1))
+    if args.pretrain_model_pth is None:
+        plt.xlabel('Predicted label\naccuracy={:0.3f}; Macro F1={:0.3f}'.format(accuracy, macro_f1))
+    else:
+        plt.xlabel('Predicted label')
 
     # plt.show()
     plt.savefig(args.plot_dir + args.exp_code + '_cm.png', bbox_inches='tight')
@@ -694,7 +698,7 @@ def plot_top_gene_PRP_dotplot(celltypes, gene_names, num_classes,
                     **kwargs):
     num_protos = prototypes_per_class if num_protos > prototypes_per_class else num_protos
     prp_path = results_dir + "prp/"
-    filename = exp_code + "_relgenes.npy"
+    filename = '_' + exp_code + "_relgenes.npy"
 
     # Identify top k genes from each class
     all_rel = []
