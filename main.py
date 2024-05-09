@@ -34,7 +34,8 @@ def main(args):
     print('\nData: ', args.dataset_name)
     # set dataloader, test_Y is not encoded
     if args.model_mode in ['train', 'test', 'plot']:
-        (train_X, test_X, train_Y, test_Y) = data.split_data(**args_dict)
+        train_idx, test_idx = data.get_split_idx(**args_dict)
+        (train_X, test_X, train_Y, test_Y) = data.split_data(train_idx, test_idx, **args_dict)
         if train_X.shape[0] > 1e5 and args.batch_size == 128:
             args.batch_size = 1024
         train_loader = data.assign_dataloader(train_X, train_Y, args.batch_size)
@@ -126,7 +127,6 @@ def main(args):
         # save model to model_dir
         save_model(model, args.model_dir, args.exp_code)
         save_model_dict(model_dict, args.model_dir)
-        # if args.save_file:
         save_file(result_trend, args.results_dir, args.exp_code, '_trend.npy')  # save loss & accuracy through epochs
         save_file(get_prototypes(model), args.results_dir, args.exp_code, '_prototypes.npy') # save prototypes
         # save model's celltype & gene names
@@ -143,7 +143,7 @@ def main(args):
     #######################################################
     args_dict = vars(args)
     if args.model_mode != 'plot':
-        predicted, _ = get_predictions(model, test_X, False if args.model_mode == 'apply' else True)
+        predicted = get_predictions(model, test_X, False if args.model_mode == 'apply' else True)
 
         if args.pretrain_model_pth is not None:
             model_encoder = data_info_loader('cell_encoder', os.path.dirname(args.pretrain_model_pth))
@@ -151,16 +151,23 @@ def main(args):
             model_encoder = data_info_loader('cell_encoder', args.model_dir)
         predicted['pred1'] = model_encoder.inverse_transform(predicted['idx1'])
         predicted['pred2'] = model_encoder.inverse_transform(predicted['idx2'])
+        predicted['sim_class'] = model_encoder.inverse_transform(predicted['sim_class'])
         
         if args.new_label: # used pred label, but save orig label as actual label
             test_idx = load_file('_idx.csv', **args)['test_idx'].dropna().astype(int)
             predicted['label'] = data.adata.obs["celltype"][test_idx]
         elif test_Y is None:
-            pass
+            predicted['label'] = []
+            predicted["mis_pred"] = []
         else:
             predicted['label'] = test_Y
-        
+            predicted["mis_pred"] = predicted['pred1'] != predicted['label']
         predicted = pd.DataFrame(predicted)
+        predicted['idx'] = test_idx
+
+        # Prediction comment (certain/ambiguous)
+        predicted = identify_TypeError(predicted, data.cell_encoder.classes_)
+        
         save_file(predicted, args.results_dir, args.exp_code, '_pred.csv')
         print("\nPredictions saved")
 
@@ -262,6 +269,7 @@ def main(args):
                                     )
             except Exception as e:
                 print(f"Error in generate LRP: {e}")
+
             # #TODO: misclassified genes LRP
             # wrong_pred_idx = np.where(orig != pred)[0]
             # try:
@@ -427,7 +435,7 @@ print('------args---------')
 print(args)
 with open(args.results_dir + 'args.pkl', 'wb') as f:
     pickle.dump(args, f)
-print("Args dict saved")
+print("\nArgs dict saved")
 
 
 if __name__ == '__main__':

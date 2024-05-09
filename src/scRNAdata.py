@@ -344,16 +344,14 @@ class scRNAData():
             X = adata.X
         X = all_to_coo(X)
         return X
+    
 
-
-    def split_data(self, new_label, data_balance, model_mode, 
-                test_ratio, results_dir, exp_code, index_file = None, pretrain_model_pth = None, **kwargs):
-        """split data into train and test"""
-        X = self.to_dense(self.adata, raw=self.raw)
-        # X = self.to_sparse_tensor(self.adata, raw=self.raw)
+    def get_split_idx(self, new_label, test_ratio, 
+                      results_dir, exp_code, index_file = None, pretrain_model_pth = None, **kwargs):
+        """get split index for training set and test set"""
         if test_ratio == 1:
             # all data for test
-            return (None, X, None, self.celltypes)
+            return np.array(), np.array(range(len(self.adata.shape[0])))
 
         if new_label:
             train_idx, test_idx = self.use_pred_label(pretrain_model_pth, results_dir, 
@@ -365,7 +363,7 @@ class scRNAData():
             test_idx = indices['test_idx'].dropna().values.astype(int) 
         else:
             if self.split is None:
-                train_idx, test_idx = train_test_split(range(X.shape[0]),
+                train_idx, test_idx = train_test_split(range(self.adata.shape[0]),
                                                     test_size = test_ratio, 
                                                     shuffle = True)
             else:
@@ -375,6 +373,20 @@ class scRNAData():
             s2 = pd.Series(test_idx, name = 'test_idx')
             df = pd.concat([s1, s2], axis = 1)
             save_file(df, results_dir, exp_code, '_idx.csv')
+        
+        return train_idx, test_idx
+
+
+    def split_data(self, train_idx, test_idx, 
+                   data_balance = True, 
+                   model_mode = "train", **kwargs):
+        """split data into train and test"""
+        X = self.to_dense(self.adata, raw=self.raw)
+        # X = self.to_sparse_tensor(self.adata, raw=self.raw)
+
+        # all data for test
+        if len(train_idx) == 0:
+            return (None, X, None, self.celltypes)
 
         train_X = X[train_idx]
         test_X = X[test_idx]

@@ -87,15 +87,14 @@ def plot_confusion_matrix(args):
         cm = confusion_matrix(orig_y, pred_y, labels = celltype_order)
         rep = classification_report(orig_y, pred_y, output_dict = True)
         macro_f1 = rep["macro avg"]["f1-score"]
-        total_count = np.sum(cm, axis = 1)
         accuracy = np.trace(cm) / np.sum(cm)
         print('Accuracy={:0.3f}; Macro F1={:0.3f}'.format(accuracy, macro_f1))
 
-        cm = cm.astype('float') / (cm.sum(axis = 1)[:, np.newaxis] + EPS) * 100
+        total_count = np.sum(cm, axis = 1)
+        cm = cm / (cm.sum(axis = 1)[:, np.newaxis] + EPS) * 100
         cm = pd.DataFrame(cm, index = celltype_order, columns = celltype_order)
         cm["Total Count"] = total_count # add total count column
 
-    
     # different labels
     else:
         model_labels = np.unique(pred_y)
@@ -107,7 +106,7 @@ def plot_confusion_matrix(args):
         mapping.fillna(0, inplace=True)
 
         total_count = mapping.sum(axis = 1)
-        cm = mapping / (mapping.sum(axis = 0) + EPS) * 100
+        cm = mapping / (mapping.sum(axis = 1) + EPS) * 100
         cm["Total Count"] = total_count
         
 
@@ -618,7 +617,7 @@ def plot_prp_dist(celltypes, gene_names,
                             ha='center',
                             fontsize=14)
             
-            ax = plt.gca()
+            # ax = plt.gca()
             ax.spines['top'].set_visible(False) # Hide the x and y axis ticks
             ax.spines['right'].set_visible(False)
             ax.set_xticks([])   # Hide the x and y axis ticks
@@ -714,7 +713,8 @@ def plot_top_gene_PRP_dotplot(celltypes, gene_names, num_classes,
             all_rel.append(gene_rel)
         top_genes = mutual_genes(top_genes, cls_top_genes, celltype_specific)
     all_rel = np.stack(all_rel, axis = 0) 
-    print(len(top_genes), all_rel.shape)
+
+    print("Top relevant genes collected:", len(top_genes))
     if len(top_genes) == 0:
         print("No cell-type specific marker found")
         return

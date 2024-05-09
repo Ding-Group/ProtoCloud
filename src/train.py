@@ -44,7 +44,8 @@ def run_model(model, train_loader,
 
     # setup loss coef  
     two_step_training = two_step
-    coefs = {'crs_ent': 1, 'recon': recon_coef, 'kl': 1, 
+    # recon=1 kl=5 OR recon=10 kl=5
+    coefs = {'crs_ent': 1, 'recon': recon_coef, 'kl': 5,
             'ortho': 0.0 if two_step_training else 1,
             'atomic': 0.0 if two_step_training else 1,
             }
@@ -136,7 +137,9 @@ def _train_model(model, dataloader, optimizer, coefs):
             # pred_y, px_mu, px_theta, z_mu, z_logVar, sim_scores = model(input, batch_id)
 
             recon_loss, kl_loss, cross_entropy, \
-                ortho_loss, atomic_loss = model.loss_function(input, target, pred_y, px_mu, px_theta, z_mu, z_logVar, sim_scores)
+                ortho_loss, atomic_loss = model.loss_function(input, target, pred_y, 
+                                                              px_mu, px_theta, z_mu, z_logVar, 
+                                                              sim_scores)
 
             # get prediction
             _, predicted = torch.max(pred_y.data, 1)
@@ -222,11 +225,14 @@ def get_predictions(model, X, test: bool = False):
               if False, use z_mean + z_log_var for prediction
     """
     input = torch.Tensor(X).to(device)
-    pred, sim_scores = model.get_pred(input, test)
+    pred, max_sim, max_cls = model.get_pred(input, test)
 
     softmax = torch.nn.Softmax(dim = -1)
     pred = softmax(pred)
     top2_probs, top2_idxs = torch.topk(pred, 2)
+
+    max_sim = max_sim.detach().cpu().numpy()
+    max_cls = max_cls.detach().cpu().numpy()
 
     prob1 = top2_probs[:,0].detach().cpu().numpy()
     prob2 = top2_probs[:,1].detach().cpu().numpy()
@@ -236,11 +242,13 @@ def get_predictions(model, X, test: bool = False):
         'prob1': prob1,
         'prob2': prob2,
         'idx1': idx1,
-        'idx2': idx2
+        'idx2': idx2,
+        'sim_class': max_cls,
+        'sim_score': max_sim,
     }
 
     del input
-    return top2_pred, sim_scores
+    return top2_pred
 
 
 def get_latent(model, X):

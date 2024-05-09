@@ -181,7 +181,9 @@ class protoCloud(nn.Module):
         return mu + std * eps
     
 
-    def loss_function(self, x, target, pred, px_mu, px_theta, z_mu, z_logVar, sim_scores):
+    def loss_function(self, x, target, pred, 
+                      px_mu, px_theta, z_mu, z_logVar, 
+                      sim_scores):
         if target.max() >= self.prototype_class_identity.shape[0]:
             print("Max target:", target.max())
             print("Shape of prototype_class_identity:", self.prototype_class_identity.shape)
@@ -387,6 +389,13 @@ class protoCloud(nn.Module):
         return proto_cells
 
 
+    def max_sim_score(self, sim_scores):
+        sim_reshaped = sim_scores.view(-1, self.num_classes, self.num_prototypes_per_class)
+        max_sim, max_cls = sim_reshaped.max(dim=2)[0].max(dim=1)
+
+        return max_sim, max_cls
+
+
     def get_pred(self, x, test = False):
         self.eval()
         if self.raw_input:     # raw: 1
@@ -402,8 +411,9 @@ class protoCloud(nn.Module):
 
         sim_scores = self.calc_sim_scores(z)
         pred = self.classifier(sim_scores)
+        max_sim, max_cls = self.max_sim_score(sim_scores)
 
-        return pred, sim_scores
+        return pred, max_sim, max_cls
     
 
     def get_latent(self, x):

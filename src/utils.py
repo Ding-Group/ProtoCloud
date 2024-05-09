@@ -256,10 +256,10 @@ def model_metrics(predicted):
     Returns the error rate, a testing report, and a confusion matrix of the results.
     Args:
         predicted: (pd.DataFrame) DataFrame containing actual and predicted labels
-                col_names: 'celltype', 'prob1', 'prob2', 'idx1', 'idx2'
+                col_names: 'label', 'prob1', 'prob2', 'pred1', 'pred2'
     """
-    orig_y = predicted['celltype']
-    pred_y = predicted['idx1']
+    orig_y = predicted['label']
+    pred_y = predicted['pred1']
 
     rep = classification_report(orig_y, pred_y, output_dict = True)
 
@@ -321,8 +321,39 @@ def load_file(results_dir, exp_code=None, file_ending=None, path=None, **kwargs)
         raise FileNotFoundError(file_path + " not found")
 
 
+
+
+def identify_TypeError(predicted, celltypes):
+    predicted['threshold'] = None
+    predicted['type'] = 'certain'
+
+    for c in celltypes:
+        cls_sim = predicted.loc[predicted['pred1'] == c, 'sim_score'].values
+        threshold = get_threshold(cls_sim)
+        
+        predicted.loc[predicted['pred1'] == c, 'threshold'] = threshold
+        predicted.loc[predicted['pred1'] == c, 'type'] = 'certain'
+        
+        predicted.loc[(predicted['pred1'] == c) & (predicted['sim_score'] < threshold), 'type'] = 'ambiguous'
+        if 'mis_pred' in predicted.columns and predicted['mis_pred'].notna().all():
+            predicted.loc[(predicted['pred1'] == c) & (predicted['mis_pred'] == True) & (predicted['sim_score'] > threshold), 'type'] = 'misannotated'
+
+    return predicted
+
+
+
 ### Plot
 #######################################################
+def get_threshold(sim_score):
+    # return np.quantile(sim_score, 0.1)
+    Q1 = np.percentile(sim_score, 25)
+    Q3 = np.percentile(sim_score, 75)
+    IQR = Q3 - Q1
+    lower_bound = Q1 - 1.5 * IQR
+    
+    return lower_bound
+
+
 def mutual_genes(list1, list2, celltype_specific=True):
     if celltype_specific:
         ul1 = [i for i in list1 if i not in list2]
