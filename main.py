@@ -158,10 +158,8 @@ def main(args):
             predicted['label'] = data.adata.obs["celltype"][test_idx]
         elif test_Y is None:
             predicted['label'] = []
-            predicted["mis_pred"] = []
         else:
             predicted['label'] = test_Y
-            predicted["mis_pred"] = predicted['pred1'] != predicted['label']
         predicted = pd.DataFrame(predicted)
         predicted['idx'] = test_idx
 
@@ -201,14 +199,20 @@ def main(args):
     predicted = load_file(args.results_dir, args.exp_code, '_pred.csv')
     orig = predicted['label']
     pred = predicted['pred1']
+    same_label = all(x in np.unique(orig) for x in np.unique(pred))
 
     
     if args.plot_trend:
         plot_epoch_trend(**args_dict)
     if args.protocorr:
         plot_protocorr_heatmap(args, data)
+    
     if args.cm and test_Y is not None:
         plot_confusion_matrix(args)
+        plot_prediction_summary(predicted, data.cell_encoder.classes_, 
+                                path = plot_path,
+                                plot_mis_pred = same_label,
+                                **args_dict)
     
     if args.umap or args.two_latent:
         latent_embedding = load_file(args.results_dir, args.exp_code, '_latent.npy')

@@ -571,6 +571,64 @@ def plot_distance_to_prototypes(args, data):
 
 
 
+def plot_prediction_summary(predicted, celltypes,
+                            path, plot_mis_pred = True, **kwargs):
+
+    fig, ax = plt.subplots(figsize=(len(celltypes)//3, 4))
+    colors = plt.cm.Set3(np.linspace(0, 1, len(celltypes))) 
+
+    barWidth = 0.3
+    # The x position of bars
+    r1 = np.arange(len(celltypes))
+    r2 = [x + barWidth for x in r1]
+
+    if not plot_mis_pred:
+        # only certainty
+        grouped = predicted.groupby(['pred1', 'certainty']).size().reset_index()
+
+        c1 = grouped[grouped['certainty'] == "certain"][0] / predicted.shape[0] * 100
+        a1 = grouped[grouped['certainty'] == "ambiguous"][0] / predicted.shape[0] * 100
+        ax.bar(r1, c1, width = barWidth, color=colors, label=celltypes)
+        ax.bar(r2, a1, width = barWidth, hatch='////', color=colors)
+
+    else:
+        # Regroup into ['pred1', 'certainty', False, True] (by mispred)
+        grouped = predicted.groupby(['pred1', 'certainty', 'mis_pred']).size()
+        grouped = grouped.unstack(level='mis_pred', fill_value=0).reset_index()
+
+        # certainty
+        c1 = grouped[grouped['certainty'] == "certain"][False] / predicted.shape[0] * 100
+        a1 = grouped[grouped['certainty'] == "ambiguous"][False] / predicted.shape[0] * 100
+        ax.bar(r1, c1, width = barWidth, color=colors, label=celltypes)
+        ax.bar(r2, a1, width = barWidth, hatch='////', color=colors)
+
+        # mis_pred
+        a2 = grouped[grouped['certainty'] == "ambiguous"][True] / predicted.shape[0] * 100
+        c2 = grouped[grouped['certainty'] == "certain"][True] / predicted.shape[0] * 100
+        ax.bar(r1, c2, bottom=c1, width = barWidth, color = 'green', label='Mis-annotated')
+        ax.bar(r2, a2, bottom=a1, width = barWidth, hatch='////', color = 'red', label='Mis-predicted')
+        
+    # layout
+    ax.set_xlabel('Cell Type')
+    ax.set_ylabel('Percentage of Cells')
+    ax.set_xticks([r + barWidth/2 for r in range(len(celltypes))], celltypes)
+    label_x = ax.get_xticklabels()
+    plt.setp(label_x, rotation=45, horizontalalignment='right')
+
+    import matplotlib.patches as mpatches
+    handles, labels = ax.get_legend_handles_labels()
+    hatch_pattern_patch = mpatches.Patch(facecolor='none', edgecolor='black', hatch='////', label='Ambiguous')
+    handles.append(hatch_pattern_patch)
+    ax.legend(handles=handles, bbox_to_anchor=(1.04, 1), loc="upper left")
+
+
+    path = path + '_predSummary.png'
+    plt.savefig(path, bbox_inches="tight")
+    plt.close()
+
+    print("\tSummary of prediction type plot saved")
+
+
 
 # PRP & LRP related plots
 #######################################################

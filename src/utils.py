@@ -323,20 +323,24 @@ def load_file(results_dir, exp_code=None, file_ending=None, path=None, **kwargs)
 
 
 
-def identify_TypeError(predicted, celltypes):
-    predicted['threshold'] = None
-    predicted['type'] = 'certain'
-
+def identify_TypeError(predicted):
+    predicted['certainty'] = 'certain'
+    predicted['certainty_threshold'] = None
+    predicted["mis_pred"] = None
+    predicted["mis_anno"] = None
+    
+    celltypes = np.unique(predicted['pred1'].values)
     for c in celltypes:
         cls_sim = predicted.loc[predicted['pred1'] == c, 'sim_score'].values
         threshold = get_threshold(cls_sim)
         
-        predicted.loc[predicted['pred1'] == c, 'threshold'] = threshold
-        predicted.loc[predicted['pred1'] == c, 'type'] = 'certain'
-        
-        predicted.loc[(predicted['pred1'] == c) & (predicted['sim_score'] < threshold), 'type'] = 'ambiguous'
-        if 'mis_pred' in predicted.columns and predicted['mis_pred'].notna().all():
-            predicted.loc[(predicted['pred1'] == c) & (predicted['mis_pred'] == True) & (predicted['sim_score'] > threshold), 'type'] = 'misannotated'
+        predicted.loc[predicted['pred1'] == c, 'certainty_threshold'] = threshold
+        predicted.loc[(predicted['pred1'] == c) & (predicted['sim_score'] < threshold), 'certainty'] = 'ambiguous'
+
+    if 'label' in predicted.columns and all(x in np.unique(predicted['label']) for x in np.unique(predicted['pred1'])):
+        predicted["mis_pred"] = predicted['pred1'] != predicted['label']
+        predicted["mis_anno"] = False
+        predicted.loc[(predicted['mis_pred'] == True) & (predicted['certainty'] == "certain"), 'mis_anno'] = True
 
     return predicted
 
