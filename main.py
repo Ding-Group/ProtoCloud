@@ -164,7 +164,7 @@ def main(args):
         predicted['idx'] = test_idx
 
         # Prediction comment (certain/ambiguous)
-        predicted = identify_TypeError(predicted, data.cell_encoder.classes_)
+        predicted = identify_TypeError(predicted)
         
         save_file(predicted, args.results_dir, args.exp_code, '_pred.csv')
         print("\nPredictions saved")
