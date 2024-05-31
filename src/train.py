@@ -2,7 +2,9 @@ import time
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.utils.data import DataLoader, TensorDataset
 
+from src.scRNAdata import *
 from src.utils import *
 import src.glo as glo
 EPS = glo.get_value('EPS')
@@ -10,15 +12,20 @@ device = 'cuda' if torch.cuda.is_available() else 'cpu'
 num_workers = 4 if torch.cuda.is_available() else 0
 
 
-def run_model(model, train_loader,
+def run_model(model, 
+            train_X, train_Y,
+            batch_size = 1028,
             epochs = 100, 
             lr = 1e-3, 
             optimizer = "AdamW",
             two_step = True,
             recon_coef = 1, 
+            kl_coef = 5,
             ortho_coef = 0.3,
             enable_early_stopping = 0,
-            validate_model = True, test_X = None, test_Y = None, ):
+            validate_model = True, test_X = None, test_Y = None,
+            model_dir = None, results_dir = None,
+            **kwargs):
     # setup optimizer
     optimizer_specs = \
             [# layers
@@ -42,10 +49,13 @@ def run_model(model, train_loader,
         raise NotImplementedError
     
 
+    train_loader = scRNAData.assign_dataloader(train_X, train_Y, batch_size)
+
+
     # setup loss coef  
     two_step_training = two_step
     # recon=1 kl=5 OR recon=10 kl=5
-    coefs = {'crs_ent': 1, 'recon': recon_coef, 'kl': 5,
+    coefs = {'crs_ent': 1, 'recon': recon_coef, 'kl': kl_coef,
             'ortho': 0.0 if two_step_training else 1,
             'atomic': 0.0 if two_step_training else 1,
             }
@@ -74,6 +84,12 @@ def run_model(model, train_loader,
                 coefs['ortho'] = ortho_coef
                 coefs['atomic'] = 1
                 step2_allowed = 1
+
+                train_predicted = get_predictions(model, train_X)
+                if model.obs_dist == 'nb':
+                    train_predicted['ll'] = get_log_likelihood(model, train_X, 
+                                            train_Y if model.nb_dispersion == "celltype_target" else None) 
+
         # # early stopping after two-step training
         # if step2_allowed and enable_early_stopping:
         #     test_acc = _test_model(model = model, 
@@ -99,6 +115,10 @@ def run_model(model, train_loader,
                                     coefs = coefs,
                                     )
                 print_results(epoch, test_acc, is_train = False)
+                
+                if epoch == epochs // 2:
+                    half_predicted = get_predictions(model, test_X)
+                    
             else:
                 test_acc = []
         train_loss_list.append(train_loss)
@@ -110,7 +130,10 @@ def run_model(model, train_loader,
     total_time = end_time - start_time
     print(f"Total training time: {total_time:.2f} seconds")
 
-    return train_loss_list, train_acc_list, valid_acc_list
+    if validate_model:
+        return (train_loss_list, train_acc_list, valid_acc_list), train_predicted, half_predicted
+    else:
+        return (train_loss_list, train_acc_list, valid_acc_list), train_predicted
 
 
 
@@ -216,6 +239,36 @@ def load_model(model_dir, model):
     # model = torch.load(model_dir)
     # model.eval()
     print("Model loaded")
+
+
+
+def get_log_likelihood(model, X=None, Y=None):
+    results = []
+    if Y is not None:
+        dataset = torch.utils.data.TensorDataset(torch.Tensor(X),
+                                                torch.Tensor(Y))
+        dataloader = torch.utils.data.DataLoader(dataset, 
+                                                  batch_size = 1000)
+        with torch.no_grad():
+            for i, (sample, label) in enumerate(dataloader):
+                input = sample.to(device)
+                target = label.to(device)
+                output = model.get_log_likelihood(input, target).detach().cpu().numpy()
+
+                results.append(output)
+    
+    else:
+        dataloader = torch.utils.data.DataLoader(torch.utils.data.TensorDataset(torch.Tensor(X)),
+                                                  batch_size = 1000)
+        with torch.no_grad():
+            for i, sample in enumerate(dataloader):
+                input = sample.to(device)
+                output = model.get_log_likelihood(input).detach().cpu().numpy()
+
+                results.append(output)
+
+    results = np.concatenate(results, axis=0)
+    return results
 
 
 def get_predictions(model, X, test: bool = False):

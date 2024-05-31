@@ -2,6 +2,7 @@ import os
 import pickle 
 import math
 import torch
+import random
 import numpy as np
 import pandas as pd
 import scanpy as sc
@@ -27,12 +28,13 @@ def makedir(path):
         os.makedirs(path)
 
 
-def seed_torch(device, seed = 7):
+def seed_torch(device, seed = 7, msg=True):
     """
     Sets Seed for reproducible experiments.
     """
-    print("Global seed set to {}".format(seed))
-    import random
+    if msg:
+        print("Global seed set to {}".format(seed))
+    
     random.seed(seed)
     os.environ['PYTHONHASHSEED'] = str(seed)
     np.random.seed(seed)
@@ -137,6 +139,8 @@ def all_to_coo(X):
 
     pt_tensor = torch.sparse.FloatTensor(indices, values, shape)
     return pt_tensor
+
+
 
 
 
@@ -322,40 +326,79 @@ def load_file(results_dir, exp_code=None, file_ending=None, path=None, **kwargs)
 
 
 
+def process_prediction_file(predicted, model_encoder, label=[]):
+    predicted['pred1'] = model_encoder.inverse_transform(predicted['idx1'])
+    predicted['pred2'] = model_encoder.inverse_transform(predicted['idx2'])
+    predicted['sim_class'] = model_encoder.inverse_transform(predicted['sim_class'])
+    predicted['label'] = label
+
+    predicted = pd.DataFrame(predicted)
+    
+    # Prediction
+    predicted = identify_TypeError(predicted)
+    return predicted
+
+
 
 def identify_TypeError(predicted):
     predicted['certainty'] = 'certain'
     predicted['certainty_threshold'] = None
+    predicted['ll_threshold'] = None
     predicted["mis_pred"] = None
     predicted["mis_anno"] = None
     
     celltypes = np.unique(predicted['pred1'].values)
+    # certainty threshold
     for c in celltypes:
         cls_sim = predicted.loc[predicted['pred1'] == c, 'sim_score'].values
-        threshold = get_threshold(cls_sim)
+        sim_threshold = get_threshold(cls_sim)
         
-        predicted.loc[predicted['pred1'] == c, 'certainty_threshold'] = threshold
-        predicted.loc[(predicted['pred1'] == c) & (predicted['sim_score'] < threshold), 'certainty'] = 'ambiguous'
+        predicted.loc[predicted['pred1'] == c, 'certainty_threshold'] = sim_threshold
+        predicted.loc[(predicted['pred1'] == c) & (predicted['sim_score'] < sim_threshold), 'certainty'] = 'ambiguous'
+    
+    # log-likelihood threshold
+    if 'll' in predicted.columns:
+        for c in celltypes:
+            cls_ll = predicted.loc[predicted['pred1'] == c, 'll'].values
+            ll_threshold = get_threshold(cls_ll)
 
-    if 'label' in predicted.columns and all(x in np.unique(predicted['label']) for x in np.unique(predicted['pred1'])):
-        predicted["mis_pred"] = predicted['pred1'] != predicted['label']
-        predicted["mis_anno"] = False
-        predicted.loc[(predicted['mis_pred'] == True) & (predicted['certainty'] == "certain"), 'mis_anno'] = True
+            predicted.loc[predicted['pred1'] == c, 'll_threshold'] = ll_threshold
+    
+
+    if 'label' in predicted.columns:        
+        if all(x in np.unique(predicted['label']) for x in np.unique(predicted['pred1'])):
+            predicted["mis_pred"] = predicted['pred1'] != predicted['label']
+            predicted["mis_anno"] = False
+            predicted.loc[(predicted['mis_pred'] == True) & (predicted['certainty'] == "certain"), 'mis_anno'] = True
 
     return predicted
 
 
 
+def get_cls_threshold(predicted):
+    """
+    return per class training data threshold
+    """
+    predicted = identify_TypeError(predicted)
+    predicted = predicted.groupby('label').first().reset_index()
+
+    return predicted[['label', 'certainty_threshold','ll_threshold']]
+
+
+
+
+
 ### Plot
 #######################################################
-def get_threshold(sim_score):
-    # return np.quantile(sim_score, 0.1)
-    Q1 = np.percentile(sim_score, 25)
-    Q3 = np.percentile(sim_score, 75)
-    IQR = Q3 - Q1
-    lower_bound = Q1 - 1.5 * IQR
+def get_threshold(score):
+    return np.quantile(score, 0.25)
+
+    # Q1 = np.percentile(score, 25)
+    # Q3 = np.percentile(score, 75)
+    # IQR = Q3 - Q1
+    # lower_bound = Q1 - 1.5 * IQR
     
-    return lower_bound
+    # return lower_bound
 
 
 def mutual_genes(list1, list2, celltype_specific=True):

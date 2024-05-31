@@ -32,21 +32,24 @@ def main(args):
     
 
     print('\nData: ', args.dataset_name)
-    # set dataloader, test_Y is not encoded
+    # split data, test_Y is not encoded
     if args.model_mode in ['train', 'test', 'plot']:
         train_idx, test_idx = data.get_split_idx(**args_dict)
         (train_X, test_X, train_Y, test_Y) = data.split_data(train_idx, test_idx, **args_dict)
         if train_X.shape[0] > 1e5 and args.batch_size == 128:
             args.batch_size = 1024
-        train_loader = data.assign_dataloader(train_X, train_Y, args.batch_size)
         data_info_saver(data.cell_encoder, args.model_dir, 'cell_encoder')
         print('Training set size: {0}'.format(train_X.shape[0]))
 
     elif args.model_mode == 'apply':
         (_, test_X, _, test_Y) = data.split_data(**args_dict)
+    
     test_X = torch.Tensor(test_X)
     print('Test set size: {0}'.format(test_X.shape[0]))
-    args.model_validation = 0 if test_Y is None else args.model_validation
+    
+    args.model_validation = 0 if test_Y is None \
+                                else args.model_validation
+    model_encoder = data.cell_encoder
 
 
     # Setup model
@@ -112,26 +115,53 @@ def main(args):
         print('\nEnter training')
         if args.model_validation:
             test_y = torch.LongTensor(data.cell_encoder.transform(test_Y))
-            result_trend = run_model(model, train_loader,
-                                    args.epochs, args.lr, args.optimizer,
-                                    args.two_step, args.recon_coef, args.ortho_coef,
+            result_trend, train_predicted, half_predicted = run_model(model, 
+                                    train_X, train_Y,
                                     test_X = test_X, test_Y = test_y, 
+                                    **args_dict
                                     )
+            
+            if model.obs_dist == 'nb':
+                ll = get_log_likelihood(model, test_X, 
+                                                half_predicted['idx1'] if model.nb_dispersion == "celltype_target" else None) 
+                half_predicted['ll'] = ll
+            half_predicted = process_prediction_file(half_predicted, model_encoder, test_y)
+            half_predicted['idx'] = test_idx
+            save_file(half_predicted, args.results_dir, args.exp_code, '_half_pred.csv')
+        
         else:
-            result_trend = run_model(model, train_loader,
-                        args.epochs, args.lr, args.optimizer,
-                        args.two_step, args.recon_coef, args.ortho_coef,
-                        validate_model = False,
-                        )
+            result_trend, train_predicted = run_model(model, 
+                                    train_X, train_Y,
+                                    validate_model = False,
+                                    **args_dict,
+                                    )
 
         # save model to model_dir
         save_model(model, args.model_dir, args.exp_code)
         save_model_dict(model_dict, args.model_dir)
         save_file(result_trend, args.results_dir, args.exp_code, '_trend.npy')  # save loss & accuracy through epochs
         save_file(get_prototypes(model), args.results_dir, args.exp_code, '_prototypes.npy') # save prototypes
+
         # save model's celltype & gene names
         data_info_saver(data.gene_names, args.model_dir, 'gene_names')
-        
+
+
+        # 1/2 training data threshold
+        train_predicted = process_prediction_file(train_predicted, model_encoder,
+                                model_encoder.inverse_transform(train_Y))
+        cls_threshold = get_cls_threshold(train_predicted)
+        save_file(cls_threshold, args.results_dir, args.exp_code, '_half_cls_threshold.csv')
+
+        # get training data class threshold
+        predicted = get_predictions(model, train_X)
+        if model.obs_dist == 'nb':
+            ll = get_log_likelihood(model, train_X, 
+                                                train_Y if model.nb_dispersion == "celltype_target" else None)
+            predicted['ll'] = ll
+        predicted = process_prediction_file(predicted, model_encoder,
+                                            model_encoder.inverse_transform(train_Y))
+        cls_threshold = get_cls_threshold(predicted)
+        save_file(cls_threshold, args.results_dir, args.exp_code, '_cls_threshold.csv')
         print('\tTraining information saved')
     
     else:
@@ -143,46 +173,40 @@ def main(args):
     #######################################################
     args_dict = vars(args)
     if args.model_mode != 'plot':
-        predicted = get_predictions(model, test_X, False if args.model_mode == 'apply' else True)
+        # predicted = get_predictions(model, test_X, False if args.model_mode == 'apply' else True)
+        predicted = get_predictions(model, test_X, False)
+        if model.obs_dist == 'nb' and test_Y is not None:
+            try:
+                predicted['ll'] = get_log_likelihood(model, test_X, 
+                                        Y = predicted['idx1'] if args.nb_dispersion == "celltype_target" else None
+                                        )
+                print("Avg log-likelihood: ", np.mean(predicted['ll']))
+                plot_cell_likelihoods(args, predicted['ll'])
+            except Exception as e:
+                print(e)
 
         if args.pretrain_model_pth is not None:
             model_encoder = data_info_loader('cell_encoder', os.path.dirname(args.pretrain_model_pth))
         else:
             model_encoder = data_info_loader('cell_encoder', args.model_dir)
-        predicted['pred1'] = model_encoder.inverse_transform(predicted['idx1'])
-        predicted['pred2'] = model_encoder.inverse_transform(predicted['idx2'])
-        predicted['sim_class'] = model_encoder.inverse_transform(predicted['sim_class'])
         
         if args.new_label: # used pred label, but save orig label as actual label
             test_idx = load_file('_idx.csv', **args)['test_idx'].dropna().astype(int)
-            predicted['label'] = data.adata.obs["celltype"][test_idx]
+            label = data.adata.obs["celltype"][test_idx]
         elif test_Y is None:
-            predicted['label'] = []
+            label = []
         else:
-            predicted['label'] = test_Y
-        predicted = pd.DataFrame(predicted)
+            label = test_Y
+        
+        # transform labels, add prediction comment (certain/ambiguous)
+        predicted = process_prediction_file(predicted, model_encoder, label)
         predicted['idx'] = test_idx
 
-        # Prediction comment (certain/ambiguous)
-        predicted = identify_TypeError(predicted, data.cell_encoder.classes_)
-        
         save_file(predicted, args.results_dir, args.exp_code, '_pred.csv')
         print("\nPredictions saved")
 
 
         if args.save_file:
-            if model.obs_dist == 'nb' and test_Y is not None:
-                try:
-                    # log-likelihood
-                    ll = model.get_log_likelihood(torch.tensor(test_X[:1000]).to(device), 
-                                                torch.tensor(predicted['idx1'][:1000]).to(device)).detach().cpu().numpy()
-                    save_file(ll, args.results_dir, args.exp_code, '_ll.npy')
-                    print("Avg log-likelihood: ", np.mean(ll))
-                    plot_cell_likelihoods(args, ll)
-                except Exception as e:
-                    print(e)
-
-
             latent = get_latent(model, test_X)
             save_file(latent, args.results_dir, args.exp_code, '_latent.npy')
             proto = get_prototypes(model)
@@ -201,7 +225,6 @@ def main(args):
     pred = predicted['pred1']
     same_label = all(x in np.unique(orig) for x in np.unique(pred))
 
-    
     if args.plot_trend:
         plot_epoch_trend(**args_dict)
     if args.protocorr:
@@ -209,10 +232,10 @@ def main(args):
     
     if args.cm and test_Y is not None:
         plot_confusion_matrix(args)
-        plot_prediction_summary(predicted, data.cell_encoder.classes_, 
-                                path = plot_path,
-                                plot_mis_pred = same_label,
-                                **args_dict)
+        # plot_prediction_summary(predicted, data.cell_encoder.classes_, 
+        #                         path = plot_path,
+        #                         plot_mis_pred = same_label,
+        #                         **args_dict)
     
     if args.umap or args.two_latent:
         latent_embedding = load_file(args.results_dir, args.exp_code, '_latent.npy')
@@ -291,7 +314,7 @@ def main(args):
         plot_marker_venn_diagram(data.adata, **args_dict)
         plot_top_gene_PRP_dotplot(data.cell_encoder.classes_, data.gene_names, 
                                 num_protos = 1, top_num_genes = 10, 
-                                celltype_specific = True, save_markers = False, **args_dict)
+                                celltype_specific = False, save_markers = False, **args_dict)
     if args.plot_lrp:
         print("Ploting LRP visulization")
         plot_lrp_dist(data.cell_encoder.classes_, data.gene_names, **args_dict)
@@ -343,6 +366,7 @@ parser.add_argument('--nb_dispersion',  type = str, default = 'celltype_target',
 parser.add_argument('--two_step',    type = int, default = 1, choices = [0, 1], help = 'use two-step training or not')
 parser.add_argument('--early_stopping', type = int, default = 0, choices = [0, 1], help = 'use early stopping training or not')
 parser.add_argument('--recon_coef',  type = float, default = 1, help = 'reconstruction loss coefficient')
+parser.add_argument('--kl_coef',  type = float, default = 5, help = 'KL divergence loss coefficient')
 parser.add_argument('--ortho_coef',  type = float, default = 0.3, help = 'orthogonality loss coefficient')
 parser.add_argument('--activation',  type = str, default = 'relu', choices = ['relu'])
 parser.add_argument('--use_bias',      type = int, default = 0, choices = [0, 1])

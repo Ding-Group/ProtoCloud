@@ -575,7 +575,7 @@ def plot_prediction_summary(predicted, celltypes,
                             path, plot_mis_pred = True, **kwargs):
 
     fig, ax = plt.subplots(figsize=(len(celltypes)//3, 4))
-    colors = plt.cm.Set3(np.linspace(0, 1, len(celltypes))) 
+    colors = plt.cm.nipy_spectral(np.linspace(0, 1, len(celltypes))) 
 
     barWidth = 0.3
     # The x position of bars
@@ -584,29 +584,31 @@ def plot_prediction_summary(predicted, celltypes,
 
     if not plot_mis_pred:
         # only certainty
-        grouped = predicted.groupby(['pred1', 'certainty']).size().reset_index()
+        grouped = predicted.groupby(['pred1', 'certainty']).size()
+        grouped = grouped.unstack(level=['certainty'], fill_value=0).reset_index()
 
-        c1 = grouped[grouped['certainty'] == "certain"][0] / predicted.shape[0] * 100
-        a1 = grouped[grouped['certainty'] == "ambiguous"][0] / predicted.shape[0] * 100
+        c1 = grouped['certain'] / predicted.shape[0] * 100
+        a1 = grouped['ambiguous'] / predicted.shape[0] * 100
         ax.bar(r1, c1, width = barWidth, color=colors, label=celltypes)
         ax.bar(r2, a1, width = barWidth, hatch='////', color=colors)
 
     else:
         # Regroup into ['pred1', 'certainty', False, True] (by mispred)
         grouped = predicted.groupby(['pred1', 'certainty', 'mis_pred']).size()
-        grouped = grouped.unstack(level='mis_pred', fill_value=0).reset_index()
+        grouped = grouped.unstack(level=['certainty','mis_pred'], fill_value=0).reset_index()
 
         # certainty
-        c1 = grouped[grouped['certainty'] == "certain"][False] / predicted.shape[0] * 100
-        a1 = grouped[grouped['certainty'] == "ambiguous"][False] / predicted.shape[0] * 100
+        c1 = grouped['certain'][False] / predicted.shape[0] * 100
+        a1 = grouped['ambiguous'][False] / predicted.shape[0] * 100
         ax.bar(r1, c1, width = barWidth, color=colors, label=celltypes)
         ax.bar(r2, a1, width = barWidth, hatch='////', color=colors)
 
         # mis_pred
-        a2 = grouped[grouped['certainty'] == "ambiguous"][True] / predicted.shape[0] * 100
-        c2 = grouped[grouped['certainty'] == "certain"][True] / predicted.shape[0] * 100
+        a2 = grouped['ambiguous'][True] / predicted.shape[0] * 100
+        c2 = grouped['certain'][True] / predicted.shape[0] * 100
         ax.bar(r1, c2, bottom=c1, width = barWidth, color = 'green', label='Mis-annotated')
         ax.bar(r2, a2, bottom=a1, width = barWidth, hatch='////', color = 'red', label='Mis-predicted')
+
         
     # layout
     ax.set_xlabel('Cell Type')
@@ -750,7 +752,7 @@ def plot_top_gene_PRP_dotplot(celltypes, gene_names, num_classes,
                     results_dir, exp_code,
                     num_protos:int = 1,
                     top_num_genes:int = 10,   # num of top rel genes from each class
-                    celltype_specific = True, # True: non-overlapping top rel genes
+                    celltype_specific = False, # True: non-overlapping top rel genes
                     save_markers = False, # save top rel markers
                     **kwargs):
     num_protos = prototypes_per_class if num_protos > prototypes_per_class else num_protos

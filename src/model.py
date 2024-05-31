@@ -59,7 +59,7 @@ class protoCloud(nn.Module):
                  use_dropout:float = 0,
                  use_bn:bool = True,
                  obs_dist: Literal['nb', 'normal'] = 'nb',
-                 nb_dispersion: Literal['celltype_target', 'celltype_pred', 'gene'] = "celltype_pred",
+                 nb_dispersion: Literal['celltype_target', 'celltype_pred', 'gene'] = "celltype_target",
                 #  n_batch:int = 1,
                  ):
         super(protoCloud, self).__init__()
@@ -259,7 +259,7 @@ class protoCloud(nn.Module):
         else:
             # x = F.normalize(x, dim = 0)
             recon_loss = torch.nn.functional.mse_loss(px_mu, x, reduction = "mean")
-            dispersion = None 
+            dispersion = None
 
         return recon_loss, dispersion
 
@@ -277,15 +277,13 @@ class protoCloud(nn.Module):
         kl_loss = kl_loss * sim_scores    # element-wise scale by similarity scores
         mask = kl_loss > 0 # prototypes contributes
 
-        # prototypes_of_correct_class = torch.t(self.prototype_class_identity[:, target.cpu()])
-        # print(torch.equal(kl_loss > 0, prototypes_of_correct_class.to(device))) # True
-        # print(torch.sum(kl_loss > 0), torch.sum(kl_loss == 0), target)
-        # exit()
-
         kl_loss = torch.sum(kl_loss, dim = -1) / (torch.sum(sim_scores * mask, dim = -1))
         kl_loss = torch.mean(kl_loss)
 
-        return kl_loss, mask
+        # L1 regularization
+        sparsity = 1.0 / torch.numel(self.encoder[0][0].weight) * torch.norm(self.encoder[0][0].weight, 1)
+
+        return kl_loss + sparsity, mask
     
 
     def orthogonal_loss(self):
@@ -298,10 +296,10 @@ class protoCloud(nn.Module):
             s_matrix = p_k_dot - (torch.eye(p_k.shape[0]).to(device))
             s_loss += torch.norm(s_matrix, p = 2)
         
-        # L1 regularization
-        sparsity = 1.0 / torch.numel(self.encoder[0][0].weight) * torch.norm(self.encoder[0][0].weight, 1)
+        # # L1 regularization
+        # sparsity = 1.0 / torch.numel(self.encoder[0][0].weight) * torch.norm(self.encoder[0][0].weight, 1)
 
-        return s_loss / self.num_classes + sparsity
+        return s_loss / self.num_classes# + sparsity
 
 
     def atomic_loss(self, sim_scores, mask):
@@ -462,8 +460,11 @@ class protoCloud(nn.Module):
         return px_mu, px_t
 
 
-    def get_log_likelihood(self, input, target):
+    def get_log_likelihood(self, input, target=None):
         if self.obs_dist != 'nb':
+            raise NotImplementedError
+        elif self.nb_dispersion == 'celltype_target' and target is None:
+            print("Provide target label for log-likelihood calculation due to your choice of dispersion")
             raise NotImplementedError
         self.eval()
         
@@ -471,12 +472,13 @@ class protoCloud(nn.Module):
         ll_value = 0
         for i in range(n_sample):
             with torch.no_grad():
-                seed_torch(torch.device(device), seed = i)
+                seed_torch(torch.device(device), seed = i, msg=False)
 
                 pred, px_mu, px_t, _, _, _ = self.forward(input)
 
                 if self.nb_dispersion == 'celltype_target':            
                     # data target
+                    assert target is not None
                     dispersion = F.linear(one_hot_encoder(target, self.num_classes), self.theta)
                     dispersion = torch.exp(dispersion)
                 elif self.nb_dispersion == 'celltype_pred': 
