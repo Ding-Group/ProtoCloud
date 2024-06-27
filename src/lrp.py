@@ -1,4 +1,4 @@
-from torchvision import datasets
+# from torchvision import datasets
 import numpy as np
 import seaborn as sns
 import matplotlib.pyplot as plt

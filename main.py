@@ -8,6 +8,7 @@ glo.set_value('EPS', 1e-16)
 glo.set_value('LRP_FILTER_TOP_K', 0.1)
 
 from src.utils import *
+from src.data import *
 from src.scRNAdata import *
 from src.train import *
 from src.plot import *
@@ -21,6 +22,7 @@ def main(args):
     args_dict = vars(args)
     
     ### load dataset
+    # adata = load_data(**args_dict)
     data = scRNAData(**args_dict)
     # ordered_celltype = ordered_class(data, args)
 
@@ -43,12 +45,12 @@ def main(args):
 
     elif args.model_mode == 'apply':
         (_, test_X, _, test_Y) = data.split_data(**args_dict)
+        test_idx = np.arange(test_X.shape[0])
     
     test_X = torch.Tensor(test_X)
     print('Test set size: {0}'.format(test_X.shape[0]))
     
-    args.model_validation = 0 if test_Y is None \
-                                else args.model_validation
+    args.model_validation = 0 if test_Y is None else args.model_validation
     model_encoder = data.cell_encoder
 
 
@@ -147,10 +149,11 @@ def main(args):
 
 
         # 1/2 training data threshold
-        train_predicted = process_prediction_file(train_predicted, model_encoder,
-                                model_encoder.inverse_transform(train_Y))
-        cls_threshold = get_cls_threshold(train_predicted)
-        save_file(cls_threshold, args.results_dir, args.exp_code, '_half_cls_threshold.csv')
+        if train_predicted is not None:
+            train_predicted = process_prediction_file(train_predicted, model_encoder,
+                                    model_encoder.inverse_transform(train_Y))
+            cls_threshold = get_cls_threshold(train_predicted)
+            save_file(cls_threshold, args.results_dir, args.exp_code, '_half_cls_threshold.csv')
 
         # get training data class threshold
         predicted = get_predictions(model, train_X)
@@ -161,7 +164,7 @@ def main(args):
         predicted = process_prediction_file(predicted, model_encoder,
                                             model_encoder.inverse_transform(train_Y))
         cls_threshold = get_cls_threshold(predicted)
-        save_file(cls_threshold, args.results_dir, args.exp_code, '_cls_threshold.csv')
+        data_info_saver(cls_threshold, args.model_dir, 'cls_threshold')
         print('\tTraining information saved')
     
     else:
@@ -199,7 +202,8 @@ def main(args):
             label = test_Y
         
         # transform labels, add prediction comment (certain/ambiguous)
-        predicted = process_prediction_file(predicted, model_encoder, label)
+        predicted = process_prediction_file(predicted, model_encoder, label, 
+                                            model_dir = os.path.dirname(args.pretrain_model_pth) if args.pretrain_model_pth is not None else args.model_dir)
         predicted['idx'] = test_idx
 
         save_file(predicted, args.results_dir, args.exp_code, '_pred.csv')
@@ -315,13 +319,15 @@ def main(args):
         plot_top_gene_PRP_dotplot(data.cell_encoder.classes_, data.gene_names, 
                                 num_protos = 1, top_num_genes = 10, 
                                 celltype_specific = False, save_markers = False, **args_dict)
+        plot_top_gene_PRP_dotplot(data.cell_encoder.classes_, data.gene_names, 
+                                num_protos = 1, top_num_genes = 10, 
+                                celltype_specific = True, save_markers = False, **args_dict)
     if args.plot_lrp:
         print("Ploting LRP visulization")
         plot_lrp_dist(data.cell_encoder.classes_, data.gene_names, **args_dict)
 
 
     
-
     print("Finished!")
         
 
@@ -418,11 +424,12 @@ args.model_dir = model_dir
 makedir(args.model_dir)
 
 # results directory
-results_dir = args.results_dir + args.dataset_name + '/'
-args.results_dir = results_dir
-makedir(results_dir)
+args.results_dir = args.results_dir + args.dataset_name + '/'
+makedir(args.results_dir)
 args.plot_dir = args.results_dir + 'plots/'
-makedir(args.plot_dir )
+makedir(args.plot_dir)
+args.anno_dir = args.results_dir + 'mis_anno/'
+makedir(args.anno_dir)
 
 
 
@@ -469,4 +476,3 @@ print("\nArgs dict saved")
 if __name__ == '__main__':
     main(args)
     print("end script\n\n\n\n\n\n")
-    exit()

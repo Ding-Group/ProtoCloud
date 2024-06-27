@@ -107,6 +107,8 @@ def data_info_saver(info, model_dir, file_name, **kwargs):
         with open(os.path.join(model_dir, 'gene_names.txt'), 'w') as f:
             for gene in info:
                 f.write(f"{gene}\n")
+    elif file_name == 'cls_threshold':
+        info.to_csv(os.path.join(model_dir, 'cls_threshold.csv'))
     else:
         raise NotImplementedError()
 
@@ -118,6 +120,8 @@ def data_info_loader(file_name, model_dir):
         with open(os.path.join(model_dir, 'gene_names.txt'), 'r') as f:
             gene_names = [line.strip() for line in f.readlines()]
         return gene_names
+    elif file_name == 'cls_threshold':
+        return pd.read_csv(os.path.join(model_dir, 'cls_threshold.csv'))
     else:
         raise NotImplementedError()
 
@@ -326,50 +330,53 @@ def load_file(results_dir, exp_code=None, file_ending=None, path=None, **kwargs)
 
 
 
-def process_prediction_file(predicted, model_encoder, label=[]):
+def process_prediction_file(predicted, model_encoder, label=[], model_dir=None):
+    predicted['certainty'] = None
+    predicted['certainty_threshold'] = None
+    predicted['ll_threshold'] = None
+    predicted["mis_pred"] = None
+    predicted["mis_anno"] = None
+
     predicted['pred1'] = model_encoder.inverse_transform(predicted['idx1'])
     predicted['pred2'] = model_encoder.inverse_transform(predicted['idx2'])
-    predicted['sim_class'] = model_encoder.inverse_transform(predicted['sim_class'])
     predicted['label'] = label
 
     predicted = pd.DataFrame(predicted)
     
     # Prediction
+    predicted = get_threshold(predicted, model_dir)
     predicted = identify_TypeError(predicted)
     return predicted
 
 
 
-def identify_TypeError(predicted):
-    predicted['certainty'] = 'certain'
-    predicted['certainty_threshold'] = None
-    predicted['ll_threshold'] = None
-    predicted["mis_pred"] = None
-    predicted["mis_anno"] = None
-    
-    celltypes = np.unique(predicted['pred1'].values)
-    # certainty threshold
-    for c in celltypes:
-        cls_sim = predicted.loc[predicted['pred1'] == c, 'sim_score'].values
-        sim_threshold = get_threshold(cls_sim)
-        
-        predicted.loc[predicted['pred1'] == c, 'certainty_threshold'] = sim_threshold
-        predicted.loc[(predicted['pred1'] == c) & (predicted['sim_score'] < sim_threshold), 'certainty'] = 'ambiguous'
-    
-    # log-likelihood threshold
-    if 'll' in predicted.columns:
+def get_threshold(predicted, model_dir=None):
+    """
+    Load or compute class threshold
+    """
+    if model_dir is not None:
+        cls_threshold = data_info_loader("cls_threshold", model_dir)
+        celltypes = cls_threshold['label'].values
         for c in celltypes:
-            cls_ll = predicted.loc[predicted['pred1'] == c, 'll'].values
-            ll_threshold = get_threshold(cls_ll)
-
-            predicted.loc[predicted['pred1'] == c, 'll_threshold'] = ll_threshold
+            predicted.loc[predicted['label'] == c, "ll_threshold"] = cls_threshold.loc[cls_threshold['label'] == c, "ll_threshold"].values[0]
+            predicted.loc[predicted['label'] == c, "certainty_threshold"] = cls_threshold.loc[cls_threshold['label'] == c, "certainty_threshold"].values[0]
     
+    else:
+        celltypes = np.unique(predicted['pred1'].values)
+        # certainty threshold
+        for c in celltypes:
+            cls_sim = predicted.loc[predicted['pred1'] == c, 'sim_score'].values
+            sim_threshold = compute_threshold(cls_sim)
+            
+            predicted.loc[predicted['pred1'] == c, 'certainty_threshold'] = sim_threshold
+        
+        # log-likelihood threshold
+        if 'll' in predicted.columns:
+            for c in celltypes:
+                cls_ll = predicted.loc[predicted['pred1'] == c, 'll'].values
+                ll_threshold = compute_threshold(cls_ll)
 
-    if 'label' in predicted.columns:        
-        if all(x in np.unique(predicted['label']) for x in np.unique(predicted['pred1'])):
-            predicted["mis_pred"] = predicted['pred1'] != predicted['label']
-            predicted["mis_anno"] = False
-            predicted.loc[(predicted['mis_pred'] == True) & (predicted['certainty'] == "certain"), 'mis_anno'] = True
+                predicted.loc[predicted['pred1'] == c, 'll_threshold'] = ll_threshold
 
     return predicted
 
@@ -386,11 +393,23 @@ def get_cls_threshold(predicted):
 
 
 
+def identify_TypeError(predicted):
+    predicted['certainty'] = 'certain'
+    predicted.loc[predicted['sim_score'] < predicted['certainty_threshold'], 'certainty'] = 'ambiguous'
+
+    if 'label' in predicted.columns:        
+        if all(x in np.unique(predicted['label']) for x in np.unique(predicted['pred1'])):
+            predicted["mis_pred"] = predicted['pred1'] != predicted['label']
+            predicted["mis_anno"] = False
+            predicted.loc[(predicted['mis_pred'] == True) & (predicted['certainty'] == "certain"), 'mis_anno'] = True
+
+    return predicted
+
 
 
 ### Plot
 #######################################################
-def get_threshold(score):
+def compute_threshold(score):
     return np.quantile(score, 0.25)
 
     # Q1 = np.percentile(score, 25)

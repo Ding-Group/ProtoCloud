@@ -1,11 +1,8 @@
 # protoCloud
 
 
-## Update
-The code is built upon protoVAE (https://github.com/SrishtiGautam/ProtoVAE) and LRP implementation from https://github.com/AlexBinder/LRP_Pytorch_Resnets_Densenet.
 
-## Prototype VAE User Guide
-# Prototype VAE - Model Manual
+## Model Manual
 
 This document provides an overview of the parameters used in the Prototype VAE model. Please review and modify these parameters according to your needs.
 
@@ -28,6 +25,8 @@ This document provides an overview of the parameters used in the Prototype VAE m
 - `cont_train`: Load existing model and continue training (0 or 1). Default: `0`
 - `pretrain_model_pth`: Full path of pre-trained model to load.
 - `two_step`: Use two-step training or not (0 or 1). Default: `1`
+- `recon_coef`: Orthogonality loss coefficient. Default: `10`
+- `kl_coef`: Orthogonality loss coefficient. Default: `2`
 - `ortho_coef`: Orthogonality loss coefficient. Default: `0.3`
 - `activation`: Activation function for the model (currently supports 'relu'). Default: `relu`
 - `use_bn`: Use batch normalization or not (0 or 1). Default: `1`
@@ -60,6 +59,7 @@ To train the Prototype VAE model using the `PBMC_10K` dataset, use the following
 python main.py --dataset PBMC_10K --model_mode train
 ```
 
-Please adjust the parameters according to your specific requirements.
-Note: The default values mentioned here are based on the provided arguments in the code. You can modify them as per your needs.
-For additional assistance, please refer to the code documentation or contact the developer.
+
+
+## Reference
+The code is built upon protoVAE (https://github.com/SrishtiGautam/ProtoVAE) and LRP implementation from https://github.com/AlexBinder/LRP_Pytorch_Resnets_Densenet.

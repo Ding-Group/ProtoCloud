@@ -19,32 +19,34 @@ def run_model(model,
             lr = 1e-3, 
             optimizer = "AdamW",
             two_step = True,
-            recon_coef = 1, 
-            kl_coef = 5,
+            recon_coef = 10, 
+            kl_coef = 2,
             ortho_coef = 0.3,
             enable_early_stopping = 0,
             validate_model = True, test_X = None, test_Y = None,
             model_dir = None, results_dir = None,
             **kwargs):
+
     # setup optimizer
-    optimizer_specs = \
-            [# layers
-             {'params': model.encoder.parameters(), 'lr': lr, 'weight_decay': 0.005},
-             {'params': model.decoder.parameters(), 'lr':lr, 'weight_decay': 0},
-             {'params': model.z_mean.parameters(), 'lr': lr, 'weight_decay': 0},
-             {'params': model.z_log_var.parameters(), 'lr': lr, 'weight_decay': 0},
-             {'params': model.px_mean.parameters(), 'lr': lr, 'weight_decay': 0},
-             {'params': model.px_theta.parameters(), 'lr': lr, 'weight_decay': 0},
-             {'params': model.classifier.parameters(), 'lr':lr, 'weight_decay': 0.005},
-             # parameters
-             {'params': model.prototype_vectors, 'lr': lr * 0.8, 'weight_decay': 0.005},
-             {'params': model.scale, 'lr': lr * 0.8, 'weight_decay': 0.005},
-             {'params': model.theta, 'lr': lr * 0.8, 'weight_decay': 0.005},
-             ]
+    # optimizer_specs = [# layers
+    #          {'params': model.encoder.parameters(), 'lr': lr, 'weight_decay': 0.005},
+    #          {'params': model.decoder.parameters(), 'lr':lr, 'weight_decay': 0},
+    #          {'params': model.z_mean.parameters(), 'lr': lr, 'weight_decay': 0},
+    #          {'params': model.z_log_var.parameters(), 'lr': lr, 'weight_decay': 0},
+    #          {'params': model.px_mean.parameters(), 'lr': lr, 'weight_decay': 0},
+    #          {'params': model.px_theta.parameters(), 'lr': lr, 'weight_decay': 0},
+    #          {'params': model.classifier.parameters(), 'lr':lr, 'weight_decay': 0.005},
+    #          # parameters
+    #          {'params': model.prototype_vectors, 'lr': lr * 0.8, 'weight_decay': 0.005},
+    #          {'params': model.scale, 'lr': lr * 0.8, 'weight_decay': 0.005},
+    #          {'params': model.theta, 'lr': lr * 0.8, 'weight_decay': 0.005},
+    #          ]
+    optimizer_specs = [{'params': model.parameters(), 'lr': lr}]
+
     if optimizer == 'Adam':
         optimizer = torch.optim.Adam(optimizer_specs)
     elif optimizer == 'AdamW':
-        optimizer = torch.optim.AdamW(optimizer_specs, eps = 1e-16)
+        optimizer = torch.optim.AdamW(optimizer_specs)
     else:
         raise NotImplementedError
     
@@ -54,6 +56,7 @@ def run_model(model,
 
     # setup loss coef  
     two_step_training = two_step
+    edge = 30 if epochs // 2 > 30 else epochs // 2
     # recon=1 kl=5 OR recon=10 kl=5
     coefs = {'crs_ent': 1, 'recon': recon_coef, 'kl': kl_coef,
             'ortho': 0.0 if two_step_training else 1,
@@ -80,10 +83,15 @@ def run_model(model,
                                                                )
         # two-stage training: add ortho loss in the second half of training
         if two_step_training:
-            if epoch == epochs // 2:
+            if epoch == edge:
                 coefs['ortho'] = ortho_coef
                 coefs['atomic'] = 1
                 step2_allowed = 1
+
+                # freeze encoder
+                for name, param in model.named_parameters():
+                    if "encoder" in name or "z_mean" in name:
+                        param.requires_grad = False
 
                 train_predicted = get_predictions(model, train_X)
                 if model.obs_dist == 'nb':
@@ -107,7 +115,6 @@ def run_model(model,
         if (epoch % 10 == 0):
             print_results(epoch, train_acc, train_loss, train_recon, train_kl, \
                             train_ce, train_ortho, train_atomic, is_train=True)
-
             # validate
             if validate_model:
                 test_acc = _test_model(model = model, 
@@ -115,12 +122,13 @@ def run_model(model,
                                     coefs = coefs,
                                     )
                 print_results(epoch, test_acc, is_train = False)
-                
-                if epoch == epochs // 2:
-                    half_predicted = get_predictions(model, test_X)
                     
             else:
                 test_acc = []
+        
+        if validate_model and epoch == edge:
+            half_predicted = get_predictions(model, test_X)
+        
         train_loss_list.append(train_loss)
         train_acc_list.append(train_acc)
         valid_acc_list.append(test_acc)
@@ -129,6 +137,9 @@ def run_model(model,
     print('\nFinished training')
     total_time = end_time - start_time
     print(f"Total training time: {total_time:.2f} seconds")
+
+    if not two_step_training:
+        train_predicted = None
 
     if validate_model:
         return (train_loss_list, train_acc_list, valid_acc_list), train_predicted, half_predicted
@@ -144,6 +155,7 @@ def _train_model(model, dataloader, optimizer, coefs):
     n_examples = len(dataloader.dataset)
     n_correct = 0
     n_batches = 0
+    total_loss = 0
     total_cross_entropy = 0
     total_recons_loss = 0
     total_kl_loss = 0
@@ -183,6 +195,8 @@ def _train_model(model, dataloader, optimizer, coefs):
                     + coefs['ortho'] * ortho_loss
                     + coefs['atomic'] * atomic_loss
                 )
+        total_loss += loss.item()
+
 
         optimizer.zero_grad()
         loss.backward()
@@ -193,13 +207,14 @@ def _train_model(model, dataloader, optimizer, coefs):
         torch.cuda.empty_cache()
 
     train_acc = n_correct / n_examples
+    train_loss = total_loss / n_batches
     train_ce = total_cross_entropy / n_batches
     train_recon = total_recons_loss / n_batches
     train_kl = total_kl_loss / n_batches
     train_ortho = total_orth_loss / n_batches
     train_atomic = total_atomic_loss / n_batches
 
-    return train_acc, loss.item(), train_recon, train_kl, train_ce, train_ortho, train_atomic
+    return train_acc, train_loss, train_recon, train_kl, train_ce, train_ortho, train_atomic
 
 
 def _test_model(model, input, label, coefs): 
@@ -278,14 +293,14 @@ def get_predictions(model, X, test: bool = False):
               if False, use z_mean + z_log_var for prediction
     """
     input = torch.Tensor(X).to(device)
-    pred, max_sim, max_cls = model.get_pred(input, test)
+    pred, max_sim, proto_idx = model.get_pred(input, test)
 
     softmax = torch.nn.Softmax(dim = -1)
     pred = softmax(pred)
     top2_probs, top2_idxs = torch.topk(pred, 2)
 
     max_sim = max_sim.detach().cpu().numpy()
-    max_cls = max_cls.detach().cpu().numpy()
+    proto_idx = proto_idx.detach().cpu().numpy()
 
     prob1 = top2_probs[:,0].detach().cpu().numpy()
     prob2 = top2_probs[:,1].detach().cpu().numpy()
@@ -296,7 +311,7 @@ def get_predictions(model, X, test: bool = False):
         'prob2': prob2,
         'idx1': idx1,
         'idx2': idx2,
-        'sim_class': max_cls,
+        'sim_proto': proto_idx,
         'sim_score': max_sim,
     }
 

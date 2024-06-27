@@ -53,243 +53,240 @@ class scRNAData():
 
         if self.topngene is not None:
             save_path = self.data_dir + self.dataset_name + str(self.topngene) + '.h5ad'
+            if os.path.exists(save_path):
+                print('Loading dataset...')
+                adata = sc.read(save_path)
         else:
             save_path = self.data_dir + self.dataset_name + '.h5ad'
 
-        preprocess_arg = {
-            "filter_gene_by_counts": 500,
-            "filter_cell_by_counts": 1000,
-            "normalize_total": 1e4,
-            "log1p": True
-        }
-        # Loading and preparing data
-        if self.dataset_name.startswith("PBMC"):
-            self.species = "human"
-            if os.path.exists(save_path):
-                print('Loading dataset...')
-                adata = sc.read(save_path)
-            else:
-                # if data file does not exist, download, preprocess & save it
-                print('Preprocessing dataset...')
-                if self.dataset_name == "PBMC_10K":
-                    adata = sc.read(self.data_dir + 'pbmc10k.h5ad')
-                elif self.dataset_name == "PBMC_20K":
-                    adata = sc.read(self.data_dir +  'pbmc20k.h5ad')
-                elif self.dataset_name == "PBMC_30K":
-                    adata = sc.read(self.data_dir +  'pbmc30k.h5ad')
-                    adata.obs["celltype"] = adata.obs["CellType"].astype("category")
+            preprocess_arg = {
+                "filter_gene_by_counts": 500,
+                "filter_cell_by_counts": 1000,
+                "normalize_total": 1e4,
+                "log1p": True
+            }
+            # Loading and preparing data
+            if self.dataset_name.startswith("PBMC"):
+                self.species = "human"
+                if os.path.exists(save_path):
+                    print('Loading dataset...')
+                    adata = sc.read(save_path)
+                else:
+                    # if data file does not exist, download, preprocess & save it
+                    print('Preprocessing dataset...')
+                    if self.dataset_name == "PBMC_10K":
+                        adata = sc.read(self.data_dir + 'pbmc10k.h5ad')
+                    elif self.dataset_name == "PBMC_20K":
+                        adata = sc.read(self.data_dir +  'pbmc20k.h5ad')
+                    elif self.dataset_name == "PBMC_30K":
+                        adata = sc.read(self.data_dir +  'PBMC_30K.h5ad')
+                        adata.obs["celltype"] = adata.obs["CellType"].astype("category")
+                        adata.var["gene_name"] = adata.var.index.tolist()
+                        adata.obs['batch'] = [int(name.split("pbmc")[-1]) for name in adata.obs['Experiment'].tolist()]                
+                    
+                    elif self.dataset_name == "PBMC1":
+                        adata = sc.read(self.data_dir +  'pbmc1.h5ad')
+                        adata.obs["celltype"] = adata.obs["CellType"].astype("category")
+                        adata.var["gene_name"] = adata.var.index.tolist()
+                        preprocess_arg['filter_gene_by_counts'] = False
+                        preprocess_arg['filter_cell_by_counts'] = False
+                    elif self.dataset_name == "PBMC2":
+                        adata = sc.read(self.data_dir +  'pbmc2.h5ad')
+                        adata.obs["celltype"] = adata.obs["CellType"].astype("category")
+                        adata.var["gene_name"] = adata.var.index.tolist()
+                        preprocess_arg['filter_gene_by_counts'] = False
+                        preprocess_arg['filter_cell_by_counts'] = False
+                    else:
+                        raise ValueError("Dataset not found!")
+                    # adata.obs["celltype"] = adata.obs["str_labels"].astype("category")
+                    # adata.var = adata.var.set_index("gene_symbols")
+                    # adata.var["gene_name"] = adata.var.index.tolist()
+                    
+                    adata = self._preprocess(adata, **preprocess_arg)
+                    adata.write(save_path, compression='gzip')
+
+                self.cell_color = None
+
+            elif self.dataset_name.startswith("TSCA"):    # == "TSCA_lung" or self.dataset_name == "TSCA_spleen" or self.dataset_name == "TSCA_oesophagus":
+                self.species = "human"
+                if os.path.exists(save_path):
+                    print('Loading dataset...')
+                    adata = sc.read(save_path)
+                else:
+                    # if data file does not exist, download, preprocess & save it
+                    print('Downloading dataset...')
+                    if self.dataset_name == "TSCA_lung":
+                        adata = sc.read(self.data_dir +'lung.cellxgene.h5ad',
+                                        backup_url="https://cellgeni.cog.sanger.ac.uk/tissue-stability/lung.cellxgene.h5ad", )
+                        adata.var = adata.var.drop(['gene_ids-HCATisStab7509735', 'gene_ids-HCATisStab7509736', 'gene_ids-HCATisStab7587202', 'gene_ids-HCATisStab7587205', 'gene_ids-HCATisStab7587208', 'gene_ids-HCATisStab7587211', 'gene_ids-HCATisStab7646032', 'gene_ids-HCATisStab7646033', 'gene_ids-HCATisStab7646034', 'gene_ids-HCATisStab7646035', 'gene_ids-HCATisStab7659968', 'gene_ids-HCATisStab7659969', 'gene_ids-HCATisStab7659970', 'gene_ids-HCATisStab7659971', 'gene_ids-HCATisStab7747197', 'gene_ids-HCATisStab7747198', 'gene_ids-HCATisStab7747199', 'gene_ids-HCATisStab7747200'], axis = 1)
+                    
+                    elif self.dataset_name == "TSCA_spleen":
+                        adata = sc.read(self.data_dir + 'spleen.cellxgene.h5ad', 
+                                        backup_url="https://cellgeni.cog.sanger.ac.uk/tissue-stability/spleen.cellxgene.h5ad", )
+                        adata.var = adata.var.drop(['gene_ids-HCATisStab7463847', 'gene_ids-HCATisStab7463848', 'gene_ids-HCATisStab7463849', 'gene_ids-HCATisStab7587200', 'gene_ids-HCATisStab7587203', 'gene_ids-HCATisStab7587206', 'gene_ids-HCATisStab7587209', 'gene_ids-HCATisStabAug177078016', 'gene_ids-HCATisStabAug177078017', 'gene_ids-HCATisStabAug177078018', 'gene_ids-HCATisStabAug177078019', 'gene_ids-HCATisStabAug177276391', 'gene_ids-HCATisStabAug177276392', 'gene_ids-HCATisStabAug177276394', 'gene_ids-HCATisStabAug177376561', 'gene_ids-HCATisStabAug177376563', 'gene_ids-HCATisStabAug177376565', 'gene_ids-HCATisStabAug177376567'], axis = 1)
+                    else:
+                        # "TSCA_oesophagus"
+                        adata = sc.read(self.data_dir + 'oesophagus.cellxgene.h5ad', 
+                                        backup_url="https://cellgeni.cog.sanger.ac.uk/tissue-stability/oesophagus.cellxgene.h5ad", )
+                        adata.var = adata.var.drop(['gene_ids-HCATisStab7413620', 'gene_ids-HCATisStab7413621', 'gene_ids-HCATisStab7413622', 'gene_ids-HCATisStab7587201', 'gene_ids-HCATisStab7587204', 'gene_ids-HCATisStab7587207', 'gene_ids-HCATisStab7587210', 'gene_ids-HCATisStab7619064', 'gene_ids-HCATisStab7619065', 'gene_ids-HCATisStab7619066', 'gene_ids-HCATisStab7619067', 'gene_ids-HCATisStab7646028', 'gene_ids-HCATisStab7646029', 'gene_ids-HCATisStab7646030', 'gene_ids-HCATisStab7646031', 'gene_ids-HCATisStabAug177184858', 'gene_ids-HCATisStabAug177184862', 'gene_ids-HCATisStabAug177184863', 'gene_ids-HCATisStabAug177376562', 'gene_ids-HCATisStabAug177376564', 'gene_ids-HCATisStabAug177376566', 'gene_ids-HCATisStabAug177376568'], axis = 1)
+                    
+
+                    adata.obs["celltype"] = adata.obs['Celltypes_updated_July_2020'].astype("category")
                     adata.var["gene_name"] = adata.var.index.tolist()
-                    adata.obs['batch'] = [int(name.split("pbmc")[-1]) for name in adata.obs['Experiment'].tolist()]                
-                
-                elif self.dataset_name == "PBMC1":
-                    adata = sc.read(self.data_dir +  'pbmc1.h5ad')
-                    adata.obs["celltype"] = adata.obs["CellType"].astype("category")
-                    adata.var["gene_name"] = adata.var.index.tolist()
+                    adata.obs = adata.obs.drop(columns = ['Donor', 'Time', 'donor_time', 'Celltypes_GenomeBiol_2019', 'Celltypes_updated_July_2020'])
+
+                    # recover raw counts according to obs['n_counts]
+                    raw = np.expm1(adata.raw.X.toarray())
+                    raw = np.round(raw)
+                    new_adata = anndata.AnnData(raw, obs = adata.obs, var = adata.var)
+                    new_adata.uns = adata.uns.copy()
+                    print("Recovered counts:", sum(np.sum(raw, axis = 1) == new_adata.obs['n_counts']))
+
+                    adata = self._preprocess(new_adata, **preprocess_arg)
+                    adata.write(save_path, compression='gzip')
+                # get color for umap
+                # self.cell_color = adata.uns["Celltypes_updated_July_2020_colors"]
+                self.cell_color = None
+            
+            elif self.dataset_name == "RGC":
+                self.species = "mouse"
+                if os.path.exists(save_path):
+                    print('Loading dataset...')
+                    adata = sc.read(save_path)
+                else:
+                    print('Preprocessing dataset...')
+                    adata = sc.read(self.data_dir + 'rgc_atlas.h5ad')
+                    adata.obs["celltype"] = adata.obs['Type']
+                    adata.var["gene_name"] = adata.var.index
+                    adata.obs['batch'] = [int(name.split("Batch")[-1]) for name in adata.obs['Batch'].tolist()]
+
+                    adata = self._preprocess(adata, **preprocess_arg)
+                    adata.write(save_path, compression='gzip')
+                self.cell_color = None
+            
+            elif self.dataset_name.endswith("ONC"):
+                self.species = "mouse"
+                if os.path.exists(save_path):
+                    print('Loading dataset...')
+                    adata = sc.read(save_path)
+                else:
+                    print('Preprocessing dataset...')
+                    adata = sc.read(self.data_dir + self.dataset_name.lower() + '.h5ad')
+                    adata.obs["celltype"] = adata.obs['Type']
+                    adata.var["gene_name"] = adata.var.index
+                    adata.obs['batch'] = [int(name.split("Batch")[-1]) for name in adata.obs['Batch'].tolist()]
+
                     preprocess_arg['filter_gene_by_counts'] = False
                     preprocess_arg['filter_cell_by_counts'] = False
-                elif self.dataset_name == "PBMC2":
-                    adata = sc.read(self.data_dir +  'pbmc2.h5ad')
-                    adata.obs["celltype"] = adata.obs["CellType"].astype("category")
-                    adata.var["gene_name"] = adata.var.index.tolist()
-                    preprocess_arg['filter_gene_by_counts'] = False
-                    preprocess_arg['filter_cell_by_counts'] = False
+                    adata = self._preprocess(adata, **preprocess_arg)
+                    adata.write(save_path, compression='gzip')
+                self.cell_color = None
+            
+            elif self.dataset_name == "ICA":
+                self.species = "human"
+                if os.path.exists(save_path):
+                    print('Loading dataset...')
+                    adata = sc.read(save_path)
                 else:
-                    raise ValueError("Dataset not found!")
-                adata.obs["celltype"] = adata.obs["str_labels"].astype("category")
-                adata.var = adata.var.set_index("gene_symbols")
-                adata.var["gene_name"] = adata.var.index.tolist()
-                
-                adata = self._preprocess(adata, **preprocess_arg)
-                adata.write(save_path, compression='gzip')
+                    print('Preprocessing dataset...')
+                    adata = sc.read(self.data_dir + self.dataset_name.lower() + '.h5ad')
+                    adata.var["gene_name"] = adata.var.index
+                    
+                    adata = self._preprocess(adata, **preprocess_arg)
+                    adata.write(save_path, compression='gzip')
+                self.cell_color = None
+            
+            # elif self.dataset_name == "SM3":
+            #     self.species = "human"
+            #     if os.path.exists(save_path):
+            #         print('Loading dataset...')
+            #         adata = sc.read(save_path)
+            #     else:
+            #         adata = sc.read(self.data_dir + 'SM3_full.h5ad').T
 
-            self.cell_color = None
+            #         annotation = pd.read_csv(self.data_dir + 'PBMCs.allruns.barcode_annotation.txt', sep="\t")
+            #         adata.obs = annotation
+            #         adata = adata[annotation['QC_status'] == 'QCpass']
 
-        elif self.dataset_name.startswith("TSCA"):    # == "TSCA_lung" or self.dataset_name == "TSCA_spleen" or self.dataset_name == "TSCA_oesophagus":
-            self.species = "human"
-            if os.path.exists(save_path):
-                print('Loading dataset...')
-                adata = sc.read(save_path)
-            else:
-                # if data file does not exist, download, preprocess & save it
-                print('Downloading dataset...')
-                if self.dataset_name == "TSCA_lung":
-                    adata = sc.read(self.data_dir +'lung.cellxgene.h5ad',
-                                    backup_url="https://cellgeni.cog.sanger.ac.uk/tissue-stability/lung.cellxgene.h5ad", )
-                    adata.var = adata.var.drop(['gene_ids-HCATisStab7509735', 'gene_ids-HCATisStab7509736', 'gene_ids-HCATisStab7587202', 'gene_ids-HCATisStab7587205', 'gene_ids-HCATisStab7587208', 'gene_ids-HCATisStab7587211', 'gene_ids-HCATisStab7646032', 'gene_ids-HCATisStab7646033', 'gene_ids-HCATisStab7646034', 'gene_ids-HCATisStab7646035', 'gene_ids-HCATisStab7659968', 'gene_ids-HCATisStab7659969', 'gene_ids-HCATisStab7659970', 'gene_ids-HCATisStab7659971', 'gene_ids-HCATisStab7747197', 'gene_ids-HCATisStab7747198', 'gene_ids-HCATisStab7747199', 'gene_ids-HCATisStab7747200'], axis = 1)
-                
-                elif self.dataset_name == "TSCA_spleen":
-                    adata = sc.read(self.data_dir + 'spleen.cellxgene.h5ad', 
-                                    backup_url="https://cellgeni.cog.sanger.ac.uk/tissue-stability/spleen.cellxgene.h5ad", )
-                    adata.var = adata.var.drop(['gene_ids-HCATisStab7463847', 'gene_ids-HCATisStab7463848', 'gene_ids-HCATisStab7463849', 'gene_ids-HCATisStab7587200', 'gene_ids-HCATisStab7587203', 'gene_ids-HCATisStab7587206', 'gene_ids-HCATisStab7587209', 'gene_ids-HCATisStabAug177078016', 'gene_ids-HCATisStabAug177078017', 'gene_ids-HCATisStabAug177078018', 'gene_ids-HCATisStabAug177078019', 'gene_ids-HCATisStabAug177276391', 'gene_ids-HCATisStabAug177276392', 'gene_ids-HCATisStabAug177276394', 'gene_ids-HCATisStabAug177376561', 'gene_ids-HCATisStabAug177376563', 'gene_ids-HCATisStabAug177376565', 'gene_ids-HCATisStabAug177376567'], axis = 1)
+            #         adata.obs['celltype'] = adata.obs['celltype_lvl2_inex_10khvg_reads_res08_new'].tolist()
+            #         adata.var["gene_name"] = adata.var.index.tolist()
+
+            #         adata = self._preprocess(adata, **preprocess_arg)
+            #         adata.write(save_path, compression='gzip')
+            #     self.cell_color = None
+
+            # elif self.dataset_name == "GCA":
+            #     self.species = "human"
+            #     if os.path.exists(save_path):
+            #         print('Loading dataset...')
+            #         adata = sc.read(save_path)
+            #     else:
+            #         # if data file does not exist, download, preprocess & save it
+            #         adata = sc.read(self.data_dir +'gutcellatlas.h5ad',
+            #                         backup_url="https://cellgeni.cog.sanger.ac.uk/gutcellatlas/Full_obj_raw_counts_nosoupx_v2.h5ad",
+            #                         )
+            #         adata.obs["celltype"] = adata.obs['category'].astype("category")
+            #         adata.var["gene_name"] = adata.var.index.tolist()
+
+            #         adata = self._preprocess(adata,
+            #             filter_gene_by_counts = 500,
+            #             filter_cell_by_counts = 1000,
+            #             normalize_total = 1e4,
+            #             log1p = True,
+            #             top_n_genes = self.topngene)
+                    
+            #         adata.write(save_path, compression = 'gzip')
+            #     self.cell_color = None
+            
+            elif self.dataset_name == "TS_spleen":
+                self.species = "human"
+                if os.path.exists(save_path):
+                    print('Loading dataset...')
+                    adata = sc.read(save_path)
                 else:
-                    # "TSCA_oesophagus"
-                    adata = sc.read(self.data_dir + 'oesophagus.cellxgene.h5ad', 
-                                    backup_url="https://cellgeni.cog.sanger.ac.uk/tissue-stability/oesophagus.cellxgene.h5ad", )
-                    adata.var = adata.var.drop(['gene_ids-HCATisStab7413620', 'gene_ids-HCATisStab7413621', 'gene_ids-HCATisStab7413622', 'gene_ids-HCATisStab7587201', 'gene_ids-HCATisStab7587204', 'gene_ids-HCATisStab7587207', 'gene_ids-HCATisStab7587210', 'gene_ids-HCATisStab7619064', 'gene_ids-HCATisStab7619065', 'gene_ids-HCATisStab7619066', 'gene_ids-HCATisStab7619067', 'gene_ids-HCATisStab7646028', 'gene_ids-HCATisStab7646029', 'gene_ids-HCATisStab7646030', 'gene_ids-HCATisStab7646031', 'gene_ids-HCATisStabAug177184858', 'gene_ids-HCATisStabAug177184862', 'gene_ids-HCATisStabAug177184863', 'gene_ids-HCATisStabAug177376562', 'gene_ids-HCATisStabAug177376564', 'gene_ids-HCATisStabAug177376566', 'gene_ids-HCATisStabAug177376568'], axis = 1)
-                
+                    adata = sc.read(self.data_dir + 'new_spleen.h5ad')
+                    adata = self._preprocess(adata, **preprocess_arg)
+                    adata.write(save_path, compression='gzip')
+                self.cell_color = None
 
-                adata.obs["celltype"] = adata.obs['Celltypes_updated_July_2020'].astype("category")
-                adata.var["gene_name"] = adata.var.index.tolist()
-                adata.obs = adata.obs.drop(columns = ['Donor', 'Time', 'donor_time', 'Celltypes_GenomeBiol_2019', 'Celltypes_updated_July_2020'])
-
-                # recover raw counts according to obs['n_counts]
-                raw = np.expm1(adata.raw.X.toarray())
-                raw = np.round(raw)
-                new_adata = anndata.AnnData(raw, obs = adata.obs, var = adata.var)
-                new_adata.uns = adata.uns.copy()
-                print("Recovered counts:", sum(np.sum(raw, axis = 1) == new_adata.obs['n_counts']))
-
-                adata = self._preprocess(new_adata, **preprocess_arg)
-                adata.write(save_path, compression='gzip')
-            # get color for umap
-            # self.cell_color = adata.uns["Celltypes_updated_July_2020_colors"]
-            self.cell_color = None
-        
-        elif self.dataset_name == "RGC":
-            self.species = "mouse"
-            if os.path.exists(save_path):
-                print('Loading dataset...')
-                adata = sc.read(save_path)
-            else:
-                print('Preprocessing dataset...')
-                adata = sc.read(self.data_dir + 'rgc_atlas.h5ad')
-                adata.obs["celltype"] = adata.obs['Type']
-                adata.var["gene_name"] = adata.var.index
-                adata.obs['batch'] = [int(name.split("Batch")[-1]) for name in adata.obs['Batch'].tolist()]
-
-                adata = self._preprocess(adata, **preprocess_arg)
-                adata.write(save_path, compression='gzip')
-            self.cell_color = None
-        
-        elif self.dataset_name.endswith("ONC"):
-            self.species = "mouse"
-            if os.path.exists(save_path):
-                print('Loading dataset...')
-                adata = sc.read(save_path)
-            else:
-                print('Preprocessing dataset...')
-                adata = sc.read(self.data_dir + self.dataset_name.lower() + '.h5ad')
-                adata.obs["celltype"] = adata.obs['Type']
-                adata.var["gene_name"] = adata.var.index
-                adata.obs['batch'] = [int(name.split("Batch")[-1]) for name in adata.obs['Batch'].tolist()]
-
-                preprocess_arg['filter_gene_by_counts'] = False
-                preprocess_arg['filter_cell_by_counts'] = False
-                adata = self._preprocess(adata, **preprocess_arg)
-                adata.write(save_path, compression='gzip')
-            self.cell_color = None
-        
-        elif self.dataset_name == "ICA":
-            self.species = "human"
-            if os.path.exists(save_path):
-                print('Loading dataset...')
-                adata = sc.read(save_path)
-            else:
-                print('Preprocessing dataset...')
-                adata = sc.read(self.data_dir + self.dataset_name.lower() + '.h5ad')
-                adata.var["gene_name"] = adata.var.index
-                
-                adata = self._preprocess(adata, **preprocess_arg)
-                adata.write(save_path, compression='gzip')
-            self.cell_color = None
-        
-        # elif self.dataset_name == "SM3":
-        #     self.species = "human"
-        #     if os.path.exists(save_path):
-        #         print('Loading dataset...')
-        #         adata = sc.read(save_path)
-        #     else:
-        #         adata = sc.read(self.data_dir + 'SM3_full.h5ad').T
-
-        #         annotation = pd.read_csv(self.data_dir + 'PBMCs.allruns.barcode_annotation.txt', sep="\t")
-        #         adata.obs = annotation
-        #         adata = adata[annotation['QC_status'] == 'QCpass']
-
-        #         adata.obs['celltype'] = adata.obs['celltype_lvl2_inex_10khvg_reads_res08_new'].tolist()
-        #         adata.var["gene_name"] = adata.var.index.tolist()
-
-        #         adata = self._preprocess(adata, **preprocess_arg)
-        #         adata.write(save_path, compression='gzip')
-        #     self.cell_color = None
-
-        # elif self.dataset_name == "GCA":
-        #     self.species = "human"
-        #     if os.path.exists(save_path):
-        #         print('Loading dataset...')
-        #         adata = sc.read(save_path)
-        #     else:
-        #         # if data file does not exist, download, preprocess & save it
-        #         adata = sc.read(self.data_dir +'gutcellatlas.h5ad',
-        #                         backup_url="https://cellgeni.cog.sanger.ac.uk/gutcellatlas/Full_obj_raw_counts_nosoupx_v2.h5ad",
-        #                         )
-        #         adata.obs["celltype"] = adata.obs['category'].astype("category")
-        #         adata.var["gene_name"] = adata.var.index.tolist()
-
-        #         adata = self._preprocess(adata,
-        #             filter_gene_by_counts = 500,
-        #             filter_cell_by_counts = 1000,
-        #             normalize_total = 1e4,
-        #             log1p = True,
-        #             top_n_genes = self.topngene)
-                
-        #         adata.write(save_path, compression = 'gzip')
-        #     self.cell_color = None
-        
-        elif self.dataset_name == "TS_spleen":
-            self.species = "human"
-            if os.path.exists(save_path):
-                print('Loading dataset...')
-                adata = sc.read(save_path)
-            else:
-                adata = sc.read(self.data_dir + 'new_spleen.h5ad')
-                adata = self._preprocess(adata, **preprocess_arg)
-                adata.write(save_path, compression='gzip')
-            self.cell_color = None
-
-        elif self.dataset_name.startswith("ATAC"):
-            self.species = "human"
-            if os.path.exists(save_path):
-                print('Loading dataset...')
-                adata = sc.read(save_path)
-            else:
-                print('Preprocessing dataset...')
-                adata = sc.read(self.data_dir + self.dataset_name + '.h5ad')
-
-                # only for top_n_genes, assume X is raw
-                adata = self._preprocess(adata,
-                        filter_gene_by_counts = False,
-                        filter_cell_by_counts = False,
-                        normalize_total = 1e4,
-                        log1p = True)
-                adata.X = adata.layers['counts']
-                del adata.layers
-                # adata.write(save_path, compression='gzip')
-        
-        elif os.path.exists(self.data_dir + self.dataset_name + '.h5ad'):
-            # load un-predefined datasets
-            print('Loading outside dataset, this will not process the data')
-
-            if self.topngene is not None:
-                top_gene_path = self.data_dir + self.dataset_name + str(self.topngene) + '.h5ad'
-                if os.path.exists(top_gene_path):
-                    adata = sc.read(top_gene_path)
+            elif self.dataset_name.startswith("ATAC"):
+                self.species = "human"
+                if os.path.exists(save_path):
+                    print('Loading dataset...')
+                    adata = sc.read(save_path)
                 else:
+                    print('Preprocessing dataset...')
                     adata = sc.read(self.data_dir + self.dataset_name + '.h5ad')
-                    adata = self._top_n_genes(adata)
-                    adata.write(top_gene_path, compression='gzip')
-            else:            
+
+                    # only for top_n_genes, assume X is raw
+                    adata = self._preprocess(adata,
+                            filter_gene_by_counts = False,
+                            filter_cell_by_counts = False,
+                            normalize_total = 1e4,
+                            log1p = True)
+                    adata.X = adata.layers['counts']
+                    del adata.layers
+                    # adata.write(save_path, compression='gzip')
+            
+            elif os.path.exists(save_path):
+                # load un-predefined datasets
+                print('Loading outside dataset, this will not process the data')
                 adata = sc.read(save_path)
 
-            # assert 'celltype' in adata.obs.columns, "The 'celltype' column is NOT present in adata.obs."
-            assert 'gene_name' in adata.var.columns, "The 'gene_name' column is NOT present in adata.var."
+                # assert 'celltype' in adata.obs.columns, "The 'celltype' column is NOT present in adata.obs."
+                assert 'gene_name' in adata.var.columns, "The 'gene_name' column is NOT present in adata.var."
 
-            self.cell_color = None
+                self.cell_color = None
 
-        else:
-            print(save_path)
-            raise ValueError("Dataset not found!")
+            else:
+                print(save_path)
+                raise ValueError("Dataset not found!")
         
-
+        # select top n genes
+        if isinstance(self.topngene, int):
+            adata = self._top_n_genes(self.topngene, adata)
+            top_gene_path = self.data_dir + self.dataset_name + str(self.topngene) + '.h5ad'
+            adata.write(top_gene_path, compression='gzip')
         #######################################################
         adata.var_names_make_unique()
         self.adata = adata#[~adata.obs['celltype'].isna(), :]
@@ -555,10 +552,6 @@ class scRNAData():
         if log1p:
             print("Log1p transforming ...")
             sc.pp.log1p(adata)
-
-        # select top n genes
-        if isinstance(self.topngene, int):
-            adata = self._top_n_genes(self.topngene, adata)
         
         return adata
     
@@ -567,6 +560,7 @@ class scRNAData():
         print("Selecting top %d genes ..." %topngene)
         sc.pp.highly_variable_genes(adata, 
                                     n_top_genes = topngene,
+                                    layer = "counts",
                                     flavor = 'cell_ranger',
         )
         adata = adata[:, adata.var['highly_variable']]

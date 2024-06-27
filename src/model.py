@@ -280,16 +280,15 @@ class protoCloud(nn.Module):
         kl_loss = torch.sum(kl_loss, dim = -1) / (torch.sum(sim_scores * mask, dim = -1))
         kl_loss = torch.mean(kl_loss)
 
-        # L1 regularization
-        sparsity = 1.0 / torch.numel(self.encoder[0][0].weight) * torch.norm(self.encoder[0][0].weight, 1)
-
-        return kl_loss + sparsity, mask
+        return kl_loss, mask
     
 
     def orthogonal_loss(self):
         s_loss = 0
         for k in range(self.num_classes):
-            p_k = self.prototype_vectors[k*self.num_prototypes_per_class : (k+1)*self.num_prototypes_per_class, :]
+            # p_k = self.prototype_vectors[k*self.num_prototypes_per_class : (k+1)*self.num_prototypes_per_class, :]
+            p_k = self.prototype_vectors[k*self.num_prototypes_per_class : (k+1)*self.num_prototypes_per_class, :self.latent_dim//2]
+
             p_k_mean = torch.mean(p_k, dim = 0)
             p_k_2 = p_k - p_k_mean
             p_k_dot = p_k_2 @ p_k_2.T
@@ -297,9 +296,9 @@ class protoCloud(nn.Module):
             s_loss += torch.norm(s_matrix, p = 2)
         
         # # L1 regularization
-        # sparsity = 1.0 / torch.numel(self.encoder[0][0].weight) * torch.norm(self.encoder[0][0].weight, 1)
+        sparsity = 1.0 / torch.numel(self.encoder[0][0].weight) * torch.norm(self.encoder[0][0].weight, 1)
 
-        return s_loss / self.num_classes# + sparsity
+        return s_loss / self.num_classes + sparsity
 
 
     def atomic_loss(self, sim_scores, mask):
@@ -389,9 +388,15 @@ class protoCloud(nn.Module):
 
     def max_sim_score(self, sim_scores):
         sim_reshaped = sim_scores.view(-1, self.num_classes, self.num_prototypes_per_class)
-        max_sim, max_cls = sim_reshaped.max(dim=2)[0].max(dim=1)
 
-        return max_sim, max_cls
+        # max sim to a prototype for each class
+        max_sim_per_cls, max_proto_indices_per_class = torch.max(sim_reshaped, dim=2)
+        # Find the nearest class for each cell
+        max_sim, nearest_cls_idx = torch.max(max_sim_per_cls, dim=1)
+        # The indices of the nearest prototypes
+        nearest_proto_idx = max_proto_indices_per_class[range(sim_reshaped.shape[0]), nearest_cls_idx]
+        
+        return max_sim, nearest_proto_idx
 
 
     def get_pred(self, x, test = False):
@@ -409,9 +414,9 @@ class protoCloud(nn.Module):
 
         sim_scores = self.calc_sim_scores(z)
         pred = self.classifier(sim_scores)
-        max_sim, max_cls = self.max_sim_score(sim_scores)
+        max_sim, proto_idx = self.max_sim_score(sim_scores)
 
-        return pred, max_sim, max_cls
+        return pred, max_sim, proto_idx
     
 
     def get_latent(self, x):
