@@ -3,6 +3,7 @@ import numpy as np
 import seaborn as sns
 import matplotlib.pyplot as plt
 from matplotlib.pyplot import show
+from sklearn.preprocessing import MinMaxScaler
 
 from src.lrp_general import *
 from src.utils import *
@@ -93,7 +94,7 @@ class model_canonized():
                 # copy linear layers
                 foundsth = True
                 if (not ("encoder" in src_module_name or "decoder" in src_module_name)):
-                    print("single_linear:", src_module_name)
+                    # print("\tsingle_linear:", src_module_name)
                     wrapped = get_lrpwrapperformodule(copy.deepcopy(src_module), 
                                                       lrp_params, 
                                                       lrp_layer2method)
@@ -143,9 +144,9 @@ class model_canonized():
                 num_layers = len(list(src_module.children()))
 
 
-        for target_module_name, target_module in net.named_modules():
-            if target_module_name not in updated_layers_names:
-                print('\tNot updated modules:', target_module_name)
+        # for target_module_name, target_module in net.named_modules():
+        #     if target_module_name not in updated_layers_names:
+        #         print('\tNot updated modules:', target_module_name)
 
 
 
@@ -162,8 +163,10 @@ def x_prp(model, input, prototype, epsilon):
         zx_mean = model.encoder(x)
         zx_mean = model.z_mean(zx_mean)
 
+        half_dim = prototype.shape[0] // 2
         # Equation 7 in the paper
-        d = (zx_mean - prototype)**2
+        # d = (zx_mean - prototype)**2
+        d = (zx_mean[:, :half_dim] - prototype[:half_dim])**2
         R_zx = 1 / (d + epsilon)            # relavance of prototype to z_mu
 
         R_zx.backward(torch.ones_like(R_zx))            # backward through encoder
@@ -231,15 +234,19 @@ def generate_PRP_explanations(model,    # model_wrapped
                           prp_path=None, exp_code=None, **kwargs):
     model.eval()
 
-    # gene_names = data.gene_names
+    gene_names = data.gene_names
     cell_types = data.cell_encoder.classes_
+    file_name = "_"+exp_code+"_relgenes.npy"
     # cell_types = [str(i) for i in range(num_classes)]
     print("Generating PRP explainations:")
 
     proto_count = 0
+    scaler = MinMaxScaler()
+    ava_type = []
     for c in range(num_classes):
         try:
             idx = np.where(train_Y == c)[0]
+            # print("PRP",c ,len(idx))
             class_prp = []
             # for each class, get the PRP genes of each prototype
             for pno in range(prototypes_per_class):
@@ -248,12 +255,18 @@ def generate_PRP_explanations(model,    # model_wrapped
                 class_prp.append(rel_mean)
             proto_count += prototypes_per_class
             class_prp = np.stack(class_prp, axis = 0)     # (n_prototypes, n_genes)
+            class_prp = scaler.fit_transform(class_prp.T).T
             # save celltype corresponding PRP genes
-            path = prp_path + cell_types[c].replace("/", " OR ") + '_'
-            save_file(class_prp, path, exp_code, "_relgenes")
+            path = prp_path + cell_types[c].replace("/", " OR ") + file_name
+            save_file(class_prp, save_path = path)
+            ava_type.append(cell_types[c])
         except Exception as e:
-            print(f"Error in generate LRP for {cell_types[c]}: {e}")
-        
+            print(c, len(np.where(train_Y == c)[0]))
+            print(f"Error in generate PRP for {cell_types[c]}: {e}")
+    
+    df = rank_HRG(ava_type, gene_names, prp_path, filename = file_name)
+    save_path = prp_path + "PRP_rank.csv"
+    save_file(df, save_path=save_path)
     print("Saved PRP genes for each class")
 
 
@@ -265,7 +278,7 @@ def generate_LRP_explanations(model,    # model_wrapped
 
     # cell_types = np.unique(test_Y)
     print("Generating LRP explainations:")
-
+    scaler = MinMaxScaler()
     for c in cell_types:
         try:
             idx = np.where(test_Y == c)[0]
@@ -274,6 +287,7 @@ def generate_LRP_explanations(model,    # model_wrapped
             path = lrp_path + c.replace("/", " OR ") + '_'
             save_file(rel, path, exp_code, "_lrp")
             rel_sum = np.sum(rel, axis = 0)   # [1, 3346]
+            rel_sum = scaler.fit_transform(rel_sum.T).T
             path = lrp_path + c.replace("/", " OR ") + '_'
             save_file(rel_sum, path, exp_code, "_relgenes")
 

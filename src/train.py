@@ -22,7 +22,7 @@ def run_model(model,
             recon_coef = 10, 
             kl_coef = 2,
             ortho_coef = 0.3,
-            enable_early_stopping = 0,
+            atomic_coef= 1,
             validate_model = True, test_X = None, test_Y = None,
             model_dir = None, results_dir = None,
             **kwargs):
@@ -57,14 +57,12 @@ def run_model(model,
     # setup loss coef  
     two_step_training = two_step
     edge = 30 if epochs // 2 > 30 else epochs // 2
-    # recon=1 kl=5 OR recon=10 kl=5
+
     coefs = {'crs_ent': 1, 'recon': recon_coef, 'kl': kl_coef,
-            'ortho': 0.0 if two_step_training else 1,
-            'atomic': 0.0 if two_step_training else 1,
+            'ortho': 0.0 if two_step_training else ortho_coef,
+            'atomic': 0.0 if two_step_training else atomic_coef,
             }
     print('loss coef:', coefs)
-    # earlystopping
-    step2_allowed = 0 if two_step_training else 1
 
     # train
     print('Start training')
@@ -72,8 +70,7 @@ def run_model(model,
     train_loss_list = []
     train_acc_list = []
     valid_acc_list = []
-    earlystopping = -1
-    
+
     for epoch in range(epochs+1):
         train_acc, train_loss, train_recon, train_kl, \
             train_ce, train_ortho, train_atomic = _train_model(model = model, 
@@ -81,70 +78,41 @@ def run_model(model,
                                                                optimizer = optimizer,
                                                                coefs = coefs,
                                                                )
+        
         # two-stage training: add ortho loss in the second half of training
         if two_step_training:
             if epoch == edge:
                 coefs['ortho'] = ortho_coef
-                coefs['atomic'] = 1
-                step2_allowed = 1
+                coefs['atomic'] = atomic_coef
 
-                # freeze encoder
-                for name, param in model.named_parameters():
-                    if "encoder" in name or "z_mean" in name:
-                        param.requires_grad = False
+        # validate
+        if validate_model:
+            test_acc = _test_model(model = model, 
+                                input = test_X, label = test_Y,
+                                coefs = coefs,
+                                )
+        else:
+            test_acc = None
 
-                train_predicted = get_predictions(model, train_X)
-                if model.obs_dist == 'nb':
-                    train_predicted['ll'] = get_log_likelihood(model, train_X, 
-                                            train_Y if model.nb_dispersion == "celltype_target" else None) 
-
-        # # early stopping after two-step training
-        # if step2_allowed and enable_early_stopping:
-        #     test_acc = _test_model(model = model, 
-        #                     input = test_X, label = test_Y,
-        #                     coefs = coefs,
-        #                     )
-        #     if test_acc > earlystopping:
-        #         earlystopping = test_acc
-        #     else:
-        #         print_results(epoch, test_acc, is_train = False)
-        #         print("Early stopping triggered!")
-        #         break
-
-        
         if (epoch % 10 == 0):
             print_results(epoch, train_acc, train_loss, train_recon, train_kl, \
                             train_ce, train_ortho, train_atomic, is_train=True)
-            # validate
-            if validate_model:
-                test_acc = _test_model(model = model, 
-                                    input = test_X, label = test_Y,
-                                    coefs = coefs,
-                                    )
-                print_results(epoch, test_acc, is_train = False)
-                    
-            else:
-                test_acc = []
-        
-        if validate_model and epoch == edge:
-            half_predicted = get_predictions(model, test_X)
+            print_results(epoch, test_acc, is_train = False)
         
         train_loss_list.append(train_loss)
         train_acc_list.append(train_acc)
         valid_acc_list.append(test_acc)
     
+
     end_time = time.time()
     print('\nFinished training')
     total_time = end_time - start_time
     print(f"Total training time: {total_time:.2f} seconds")
 
-    if not two_step_training:
-        train_predicted = None
-
     if validate_model:
-        return (train_loss_list, train_acc_list, valid_acc_list), train_predicted, half_predicted
+        return (train_loss_list, train_acc_list, valid_acc_list)
     else:
-        return (train_loss_list, train_acc_list, valid_acc_list), train_predicted
+        return (train_loss_list, train_acc_list, valid_acc_list)
 
 
 
@@ -169,7 +137,6 @@ def _train_model(model, dataloader, optimizer, coefs):
 
         with torch.enable_grad():
             pred_y, px_mu, px_theta, z_mu, z_logVar, sim_scores = model(input)
-            # pred_y, px_mu, px_theta, z_mu, z_logVar, sim_scores = model(input, batch_id)
 
             recon_loss, kl_loss, cross_entropy, \
                 ortho_loss, atomic_loss = model.loss_function(input, target, pred_y, 
@@ -218,16 +185,12 @@ def _train_model(model, dataloader, optimizer, coefs):
 
 
 def _test_model(model, input, label, coefs): 
-    # device = torch.device("cuda" if torch.cuda.is_available() else "cpu") 
     model.eval()
 
     input = torch.Tensor(input).to(device)
     target = torch.LongTensor(label).to(device)
-    # batch_id = b.to(device)
 
     pred_y, px_mu, px_theta, z_mu, z_logVar, sim_scores = model(input)
-    # pred_y, px_mu, px_theta, z_mu, z_logVar, sim_scores = model(input, batch_id)
-
     # get prediction
     _, predicted = torch.max(pred_y.data, 1)
     n_correct = (predicted == target).sum().item()
@@ -260,10 +223,8 @@ def load_model(model_dir, model):
 def get_log_likelihood(model, X=None, Y=None):
     results = []
     if Y is not None:
-        dataset = torch.utils.data.TensorDataset(torch.Tensor(X),
-                                                torch.Tensor(Y))
-        dataloader = torch.utils.data.DataLoader(dataset, 
-                                                  batch_size = 1000)
+        dataset = torch.utils.data.TensorDataset(torch.Tensor(X), torch.Tensor(Y))
+        dataloader = torch.utils.data.DataLoader(dataset, batch_size = 1000)
         with torch.no_grad():
             for i, (sample, label) in enumerate(dataloader):
                 input = sample.to(device)
@@ -277,9 +238,8 @@ def get_log_likelihood(model, X=None, Y=None):
                                                   batch_size = 1000)
         with torch.no_grad():
             for i, sample in enumerate(dataloader):
-                input = sample.to(device)
+                input = sample[0].to(device)
                 output = model.get_log_likelihood(input).detach().cpu().numpy()
-
                 results.append(output)
 
     results = np.concatenate(results, axis=0)
@@ -292,38 +252,60 @@ def get_predictions(model, X, test: bool = False):
         test: if True, use z_mean for prediction
               if False, use z_mean + z_log_var for prediction
     """
-    input = torch.Tensor(X).to(device)
-    pred, max_sim, proto_idx = model.get_pred(input, test)
-
-    softmax = torch.nn.Softmax(dim = -1)
-    pred = softmax(pred)
-    top2_probs, top2_idxs = torch.topk(pred, 2)
-
-    max_sim = max_sim.detach().cpu().numpy()
-    proto_idx = proto_idx.detach().cpu().numpy()
-
-    prob1 = top2_probs[:,0].detach().cpu().numpy()
-    prob2 = top2_probs[:,1].detach().cpu().numpy()
-    idx1 = top2_idxs[:,0].detach().cpu().numpy()
-    idx2 = top2_idxs[:,1].detach().cpu().numpy()
+    dataloader = torch.utils.data.DataLoader(torch.utils.data.TensorDataset(torch.Tensor(X)),
+                                             batch_size = 1000)
     top2_pred = {
-        'prob1': prob1,
-        'prob2': prob2,
-        'idx1': idx1,
-        'idx2': idx2,
-        'sim_proto': proto_idx,
-        'sim_score': max_sim,
+        'prob1': [],
+        'prob2': [],
+        'idx1': [],
+        'idx2': [],
+        'sim_proto': [],
+        'sim_score': [],
     }
 
-    del input
+    with torch.no_grad():
+        softmax = torch.nn.Softmax(dim = -1)
+        for sample in dataloader:
+            input = sample[0].to(device)
+            pred, max_sim, proto_idx = model.get_pred(input, test)
+            pred = softmax(pred)
+
+            del input
+            top2_probs, top2_idxs = torch.topk(pred, 2)
+            max_sim = max_sim.detach().cpu().numpy()
+            proto_idx = proto_idx.detach().cpu().numpy()
+
+            prob1 = top2_probs[:,0].detach().cpu().numpy()
+            prob2 = top2_probs[:,1].detach().cpu().numpy()
+            idx1 = top2_idxs[:,0].detach().cpu().numpy()
+            idx2 = top2_idxs[:,1].detach().cpu().numpy()
+
+            top2_pred['prob1'].append(prob1)
+            top2_pred['prob2'].append(prob2)
+            top2_pred['idx1'].append(idx1)
+            top2_pred['idx2'].append(idx2)
+            top2_pred['sim_proto'].append(proto_idx)
+            top2_pred['sim_score'].append(max_sim)
+    
+    for p in top2_pred:
+        top2_pred[p] = np.concatenate(top2_pred[p], axis=0)
     return top2_pred
 
 
+
 def get_latent(model, X):
-    input = torch.Tensor(X).to(device)
-    latent = model.get_latent(input).cpu().detach().numpy()
-    del input
-    return latent
+    dataloader = torch.utils.data.DataLoader(torch.utils.data.TensorDataset(torch.Tensor(X)),
+                                            batch_size = 1000)
+    
+    latent_embedding = []
+    for sample in dataloader:
+        input = sample[0].to(device)
+        latent = model.get_latent(input).cpu().detach().numpy()
+        latent_embedding.append(latent)
+        del input, latent
+
+    latent_embedding = np.concatenate(latent_embedding, axis=0)
+    return latent_embedding
 
 
 def get_latent_decode(model, Z):

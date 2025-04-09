@@ -148,12 +148,6 @@ class protoCloud(nn.Module):
         sim_scores = self.calc_sim_scores(z)
         pred = self.classifier(sim_scores)
 
-        # # add batch to decoder
-        # batch = torch.nn.functional.one_hot(batch_id, num_classes=self.n_batch)
-        # print("batch_dim", batch.shape)
-        # z = torch.concat((z, batch), axis=1)
-        # print("z_dim", z.shape)
-
         px = self.decoder(z)
         px_mu = self.px_mean(px)
 
@@ -182,17 +176,16 @@ class protoCloud(nn.Module):
     
 
     def loss_function(self, x, target, pred, 
-                      px_mu, px_theta, z_mu, z_logVar, 
+                      px_mu, px_theta, 
+                      z_mu, z_logVar, 
                       sim_scores):
         if target.max() >= self.prototype_class_identity.shape[0]:
             print("Max target:", target.max())
             print("Shape of prototype_class_identity:", self.prototype_class_identity.shape)
             raise IndexError("Target index is out of bounds.")
 
-
         # Reconstruction loss
         if self.nb_dispersion == 'celltype_target' or self.nb_dispersion == 'gene':            
-            # data target or gene
             recon_loss, _ = self.recon_loss(x, target, px_mu, px_theta)
         else: # self.nb_dispersion == 'celltype_pred' 
             softmax_pred = F.softmax(pred, dim=1)
@@ -227,18 +220,11 @@ class protoCloud(nn.Module):
                         self.prototype_vectors[:, :self.latent_dim // 2], p = 2)  ## Batch size x num_prototypes
         sim_scores = self.distance_2_similarity(d)
         return sim_scores
-    
+
+
     def distance_2_similarity(self, distances):
         # return torch.log((distances + 1) / (distances + self.epsilon))
         return 1.0 / (torch.square(distances * self.scale) + 1.0)   # heavy tail
-    
-    # def classification_loss(self, pred, target):
-    #     # return F.cross_entropy(pred, target)
-
-    #     pred_reshaped = pred.view(-1, self.num_classes, self.prototypes_per_class)
-    #     # Apply max pooling across the prototypes for each class
-    #     outputs_max, _ = torch.max(pred_reshaped, dim=2)
-    #     return F.cross_entropy(outputs_max, targets)
 
 
     def recon_loss(self, x, target, px_mu, px_t):
@@ -266,12 +252,20 @@ class protoCloud(nn.Module):
 
     def kl_divergence_nearest(self, mu, logVar, nearest_pt, sim_scores):
         kl_loss = torch.zeros(sim_scores.shape).to(device) 
+        half_latent = self.latent_dim//2
 
         for i in range(self.num_prototypes_per_class):
-            p = torch.distributions.Normal(mu, torch.exp(logVar / 2))
             p_v = self.prototype_vectors[nearest_pt[:, i], :]     # all class prototype i vector
-            q = torch.distributions.Normal(p_v, torch.ones(p_v.shape).to(device))
-            kl = torch.mean(torch.distributions.kl.kl_divergence(p, q), dim = -1)
+            
+            kl1 = torch.distributions.kl.kl_divergence(
+                torch.distributions.Normal(mu[:, :half_latent], torch.exp(logVar[:, :half_latent] / 2)),
+                torch.distributions.Normal(p_v[:, :half_latent], torch.ones(p_v[:, :half_latent].shape).to(device))
+                )
+            kl2 = torch.distributions.kl.kl_divergence(
+                torch.distributions.Normal(mu[:, half_latent:], torch.exp(logVar[:, half_latent:] / 2)),
+                torch.distributions.Normal(p_v[:, half_latent:], torch.ones(p_v[:, half_latent:].shape).to(device))
+                )
+            kl = torch.mean(kl1 * 5 + kl2, dim=-1)
             kl_loss[np.arange(sim_scores.shape[0]), nearest_pt[:, i]] = kl
 
         kl_loss = kl_loss * sim_scores    # element-wise scale by similarity scores
@@ -281,7 +275,7 @@ class protoCloud(nn.Module):
         kl_loss = torch.mean(kl_loss)
 
         return kl_loss, mask
-    
+
 
     def orthogonal_loss(self):
         s_loss = 0
@@ -308,6 +302,7 @@ class protoCloud(nn.Module):
         return repulsion - attraction
 
 
+
     def set_last_layer_incorrect_connection(self, incorrect_strength):
         '''
         the incorrect strength will be actual strength if -0.5 then input -0.5
@@ -320,23 +315,7 @@ class protoCloud(nn.Module):
         self.classifier.weight.data.copy_(
             correct_class_connection * positive_one_weights_locations
             + incorrect_class_connection * negative_one_weights_locations)
-    
-    
-    # def _initialize_weights(self):
-    #     '''
-    #     initialize weights for all layers
-    #     '''
-    #     for m_name, m in self.named_modules():
-    #         if isinstance(m, nn.Linear):
-    #             nn.init.uniform_(m.weight, -0.08, 0.08)
-    #             if m.bias is not None:
-    #                 nn.init.constant_(m.bias, 0)
-    #         elif isinstance(m, nn.BatchNorm1d):
-    #             nn.init.constant_(m.weight, 1)
-    #             nn.init.constant_(m.bias, 0.001)
-    #         else:
-    #             pass
-    #     self.set_last_layer_incorrect_connection(incorrect_strength = -0.5)
+
 
 
     def _initialize_weights(self):
@@ -428,7 +407,7 @@ class protoCloud(nn.Module):
 
         return z_mu
 
-    
+
     def get_latent_decode(self, z):
         px = self.decoder(z)
         px_mu = self.px_mean(px)
@@ -463,6 +442,7 @@ class protoCloud(nn.Module):
 
         px_mu, px_t = self.get_latent_decode(z)
         return px_mu, px_t
+
 
 
     def get_log_likelihood(self, input, target=None):

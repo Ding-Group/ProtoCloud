@@ -95,19 +95,7 @@ def get_lrpwrapperformodule(module,
       raise lrplookupnotfounderror( key, "not find in lrp_layer2method")
 
     autogradfunction = lrp_layer2method[key]()  # linearlayer_*_wrapper_fct()
-    # if type(autogradfunction) == linearlayer_beta0_wrapper_fct:
-    #   return oneparam_wrapper_class(module, autogradfunction = autogradfunction, 
-    #                                 parameter1 = lrp_params['conv2d_ignorebias'] )
-    # elif type(autogradfunction) == conv2d_betaany_wrapper_fct: 
-    #   return twoparam_wrapper_class(module, autogradfunction = autogradfunction, 
-    #                                 parameter1 = lrp_params['conv2d_ignorebias'], 
-    #                                 parameter2 = torch.tensor( lrp_params['conv2d_beta']) )
-    # elif type(autogradfunction) == conv2d_betaadaptive_wrapper_fct: 
-    #   return twoparam_wrapper_class(module, autogradfunction = autogradfunction, 
-    #                                 parameter1 = lrp_params['conv2d_ignorebias'], 
-    #                                 parameter2 = torch.tensor( lrp_params['conv2d_maxbeta']) )
-    # else:
-    #   print('unknown autogradfunction', type(autogradfunction) )
+
     if type(autogradfunction) == linearlayer_eps_wrapper_fct:
       return oneparam_wrapper_class(module, 
                                     autogradfunction = autogradfunction, 
@@ -128,8 +116,6 @@ def get_lrpwrapperformodule(module,
        return oneparam_wrapper_class(module, 
                                     autogradfunction = autogradfunction, 
                                     parameter1 = lrp_params['linear_ignorebias'] )
-    
-       
 
   else:
     raise lrplookupnotfounderror( "found no dictionary entry in lrp_layer2method for this module name:", module)
@@ -503,7 +489,7 @@ class linearlayer_absZ_wrapper_fct(torch.autograd.Function):
 
 def relevance_filter(r: torch.tensor, top_k_percent: float = 1.0) -> torch.tensor:
     """
-    From: https://github.com/kaifishr/PyTorchRelevancePropagation
+    Adopted from: https://github.com/kaifishr/PyTorchRelevancePropagation
 
     Filter that allows largest k percent values to pass for each batch dimension.
     Filter keeps k% of the largest tensor elements. Other tensor elements are set to
@@ -652,49 +638,6 @@ class negposlinear(nn.Module):
     
 
 
-
-""" 
-class anysign_conv(nn.Module):
-    def _clone_module(self, module):
-        clone = nn.Conv2d(module.in_channels, module.out_channels, module.kernel_size,
-                     **{attr: getattr(module, attr) for attr in ['stride', 'padding', 'dilation', 'groups']})
-        return clone.to(module.weight.device)
-
-    def __init__(self, conv, ignorebias):
-      super( anysign_conv, self).__init__()
-
-      self.posconv = self._clone_module(conv)
-      self.posconv.weight= torch.nn.Parameter( conv.weight.data.clone().clamp(min = 0) ).to(conv.weight.device)
-
-      self.negconv = self._clone_module(conv)
-      self.negconv.weight= torch.nn.Parameter( conv.weight.data.clone().clamp(max = 0) ).to(conv.weight.device)
-
-      self.jusconv = self._clone_module(conv)
-      self.jusconv.weight= torch.nn.Parameter( conv.weight.data.clone() ).to(conv.weight.device)
-
-      if ignorebias ==True:
-        self.posconv.bias = None
-        self.negconv.bias = None
-        self.jusconv.bias = None
-      else:
-          if conv.bias is not None:
-              self.posconv.bias = torch.nn.Parameter( conv.bias.data.clone().clamp(min = 0) ).to(conv.weight.device)
-              self.negconv.bias = torch.nn.Parameter( conv.bias.data.clone().clamp(max = 0) ).to(conv.weight.device)
-              self.jusconv.bias = torch.nn.Parameter( conv.bias.data.clone() ).to(conv.weight.device)
-
-      # print('done init')
-
-    def forward(self,mode,x):
-        if mode == 'pos':
-            return self.posconv.forward(x)
-        elif mode =='neg':
-            return self.negconv.forward(x)
-        elif mode =='justasitis':
-            return self.jusconv.forward(x)
-        else:
-            raise NotImplementedError("anysign_conv notimpl mode: "+ str(mode))
-        return vp+vn
- """
 
 
 

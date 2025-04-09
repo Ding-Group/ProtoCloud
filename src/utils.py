@@ -8,7 +8,7 @@ import pandas as pd
 import scanpy as sc
 import anndata
 from scipy import sparse
-from sklearn.preprocessing import LabelEncoder
+from sklearn.preprocessing import LabelEncoder, MinMaxScaler
 from sklearn.metrics import confusion_matrix, accuracy_score, balanced_accuracy_score, classification_report
 from matplotlib import pyplot as plt
 import seaborn as sns
@@ -330,7 +330,7 @@ def load_file(results_dir, exp_code=None, file_ending=None, path=None, **kwargs)
 
 
 
-def process_prediction_file(predicted, model_encoder, label=[], model_dir=None):
+def process_prediction_file(predicted, model_encoder, label=None, model_dir=None):
     predicted['certainty'] = None
     predicted['certainty_threshold'] = None
     predicted['ll_threshold'] = None
@@ -342,9 +342,11 @@ def process_prediction_file(predicted, model_encoder, label=[], model_dir=None):
     predicted['label'] = label
 
     predicted = pd.DataFrame(predicted)
+    print(predicted.head())
     
     # Prediction
     predicted = get_threshold(predicted, model_dir)
+    print(predicted.head())
     predicted = identify_TypeError(predicted)
     return predicted
 
@@ -356,10 +358,10 @@ def get_threshold(predicted, model_dir=None):
     """
     if model_dir is not None:
         cls_threshold = data_info_loader("cls_threshold", model_dir)
-        celltypes = cls_threshold['label'].values
+        celltypes = np.unique(cls_threshold['label'].values)
         for c in celltypes:
-            predicted.loc[predicted['label'] == c, "ll_threshold"] = cls_threshold.loc[cls_threshold['label'] == c, "ll_threshold"].values[0]
-            predicted.loc[predicted['label'] == c, "certainty_threshold"] = cls_threshold.loc[cls_threshold['label'] == c, "certainty_threshold"].values[0]
+            predicted.loc[predicted['pred1'] == c, "ll_threshold"] = cls_threshold.loc[cls_threshold['label'] == c, "ll_threshold"].values[0]
+            predicted.loc[predicted['pred1'] == c, "certainty_threshold"] = cls_threshold.loc[cls_threshold['label'] == c, "certainty_threshold"].values[0]
     
     else:
         celltypes = np.unique(predicted['pred1'].values)
@@ -397,7 +399,7 @@ def identify_TypeError(predicted):
     predicted['certainty'] = 'certain'
     predicted.loc[predicted['sim_score'] < predicted['certainty_threshold'], 'certainty'] = 'ambiguous'
 
-    if 'label' in predicted.columns:        
+    if not predicted['label'].isnull().any():        
         if all(x in np.unique(predicted['label']) for x in np.unique(predicted['pred1'])):
             predicted["mis_pred"] = predicted['pred1'] != predicted['label']
             predicted["mis_anno"] = False
@@ -410,7 +412,8 @@ def identify_TypeError(predicted):
 ### Plot
 #######################################################
 def compute_threshold(score):
-    return np.quantile(score, 0.25)
+    # return np.quantile(score, 0.25)
+    return np.quantile(score, 0.1)
 
     # Q1 = np.percentile(score, 25)
     # Q3 = np.percentile(score, 75)
@@ -461,3 +464,35 @@ def minmax_scale_matrix(matrix_np):
     
     scaled_matrix = (matrix_np - row_mins) / (row_maxs - row_mins)
     return scaled_matrix
+
+
+
+def rank_HRG(types:list, gene_names, prp_path, filename):
+    scaler = MinMaxScaler()
+    gene_names = np.array(gene_names)
+    
+    proto_rel1 = np.load(prp_path + types[0].replace("/", " OR ") + filename, allow_pickle=True)
+    proto_rel1 = scaler.fit_transform(proto_rel1.T).T
+
+    gene_rel1 = proto_rel1[0]
+    topn = gene_rel1.shape[0]
+
+    df = pd.DataFrame(data = gene_rel1).T
+    df = pd.DataFrame(df.sum().nlargest(topn), columns=[f"{types[0]}_rel"])
+    df['idx'] = df.index.tolist()
+    df[f'{types[0]}_rank'] = np.arange(topn)
+    df['gene_name'] = gene_names[df.index.tolist()].tolist()
+    df = df[['idx', 'gene_name', f"{types[0]}_rel", f'{types[0]}_rank']]
+    
+    for type2 in types[1:]:
+        proto_rel2 = np.load(prp_path + type2.replace("/", " OR ") + filename, allow_pickle=True)
+        proto_rel2 = scaler.fit_transform(proto_rel2.T).T
+        gene_rel2 = proto_rel2[0]
+
+        df1 = pd.DataFrame(data = gene_rel2).T
+        df1 = pd.DataFrame(df1.sum().nlargest(topn), columns=[f"{type2}_rel"])
+        df1['idx'] = df1.index.tolist()
+        df1[f'{type2}_rank'] = np.arange(topn)
+
+        df = df.merge(df1, on='idx')
+    return df
