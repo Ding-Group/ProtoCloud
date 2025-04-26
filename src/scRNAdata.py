@@ -18,60 +18,72 @@ from src.utils import *
 import src.glo as glo
 EPS = glo.get_value('EPS')
 
-species = {
-    "PBMC": "human",
-    "TSCA": "human",
-    "RGC": "mouse",
-    "ONC": "mouse",
-    "ICA": "human",
-    "SM3": "human", 
-    "ATAC": "human",
-    "TS_spleen": "human",
-}
+# species = {
+#     "PBMC": "human",
+#     "TSCA": "human",
+#     "RGC": "mouse",
+#     "ONC": "mouse",
+#     "ICA": "human",
+#     "SM3": "human", 
+#     "ATAC": "human",
+#     "TS_spleen": "human",
+# }
 
 
 class scRNAData():
     """
-    PBMC_10K: scvi-pbmcs_10k
-    Tissue Stability Cell Atlas (TSCA): https://www.tissuestabilitycellatlas.org/
-        Lung: https://cellgeni.cog.sanger.ac.uk/tissue-stability/lung.cellxgene.h5ad
-        Spleen: https://cellgeni.cog.sanger.ac.uk/tissue-stability/spleen.cellxgene.h5ad
-        Oesophagus: https://cellgeni.cog.sanger.ac.uk/tissue-stability/oesophagus.cellxgene.h5ad
-    
+    scRNA-seq dataset class for loading and processing single-cell RNA-seq data.
+    Methods:
+        to_dense(adata, raw=True): Convert sparse AnnData object to dense format.
+        to_sparse_tensor(adata, raw=True): Convert AnnData object to sparse tensor format.
+        get_split_idx(new_label, test_ratio, results_dir, exp_code, index_file=None, pretrain_model_pth=None, **kwargs): Get split index for training and test sets.
+        split_data(train_idx, test_idx, data_balance=True, model_mode="train", **kwargs): Split data into train and test sets.
+        augment_rares(X, Y): Augment rare cell types in the dataset.
+        assign_dataloader(X, Y, batch_size, batch=None): Assign dataloader for the dataset.
+        _label_encoder(labels): Generate numerical labels using label encoder.
+        _preprocess(adata, filter_gene_by_counts=False, filter_cell_by_counts=False, normalize_total=1e4, log1p=True): Preprocess the dataset.
+        _top_n_genes(topngene, adata, raw=True): Select top n genes from the dataset.
+        _remove_by_species(adata): Remove highly expressed genes based on species.
+        gene_subset(pretrain_model_pth, **kwargs): Load pretrained model genes and resize the data.
+        use_pred_label(pretrain_model_pth, results_dir, exp_code, test_ratio, prob_mask=True, **kwargs): Use predicted label with high certainty as train set and rest as test set.    
     """
-    def __init__(self, dataset_name, data_dir, raw:bool, topngene,
-                split, **kwargs):
+    def __init__(self, dataset_name, data_dir, raw:bool, topngene, 
+                preprocess_data = False, species='human',
+                filter_gene_by_counts=500, filter_cell_by_counts=1000, normalize_total=1e4, log1p=True, 
+                **kwargs):
         self.dataset_name = dataset_name
         self.data_dir = data_dir
         self.raw = raw
         self.topngene = topngene
 
-        self.split = split
         self.time_order = None
         self.time_col = None
-        self.species = None
+        self.species = species
 
         save_path = self.data_dir + self.dataset_name + str(self.topngene) + '.h5ad'
         if self.topngene is not None and os.path.exists(save_path):
+            # top_n_gene dataset already exists and preprocessed
             print('Loading dataset...')
             adata = sc.read(save_path)
+        
         else:
+            # load dataset (and preprocess)
             save_path = self.data_dir + self.dataset_name + '.h5ad'
-
-            preprocess_arg = {
-                "filter_gene_by_counts": 500,
-                "filter_cell_by_counts": 1000,
-                "normalize_total": 1e4,
-                "log1p": True
-            }
 
             if os.path.exists(save_path):
                 # load un-predefined datasets
                 print('Loading outside dataset, this will not process the data')
                 adata = sc.read(save_path)
-
-                # assert 'celltype' in adata.obs.columns, "The 'celltype' column is NOT present in adata.obs."
                 assert 'gene_name' in adata.var.columns, "The 'gene_name' column is NOT present in adata.var."
+                
+                if preprocess_data:
+                    preprocess_arg = {
+                        "filter_gene_by_counts": filter_gene_by_counts,
+                        "filter_cell_by_counts": filter_cell_by_counts,
+                        "normalize_total": normalize_total,
+                        "log1p": log1p
+                    }
+                    adata = self._preprocess(adata, **preprocess_arg)
 
                 self.cell_color = None
 
@@ -349,7 +361,8 @@ class scRNAData():
             mt_gene = names[[bool(re.search('MT-', gene)) for gene in upper]].tolist()
             prob_gene = names[[bool(re.search('MALAT1', gene)) for gene in upper]].tolist()
         else:
-            raise ValueError('Species must be human or mouse!')
+            print(f'Species not found: Species must be human or mouse, got {self.species}')
+            return adata
             
         mask = ~names.isin(rb_gene + mt_gene + prob_gene)
         return adata[:, mask]

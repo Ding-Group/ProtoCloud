@@ -22,9 +22,7 @@ def main(args):
     args_dict = vars(args)
     
     ### load dataset
-    # adata = load_data(**args_dict)
     data = scRNAData(**args_dict)
-    # ordered_celltype = ordered_class(data, args)
 
     if args.pretrain_model_pth is not None:
         print("Reformat data according to pretrained model")
@@ -321,10 +319,15 @@ parser.add_argument('--data_dir',       type = str, default = './data/')
 parser.add_argument('--model_dir',      type = str, default = './saved_models/')
 parser.add_argument('--results_dir',    type = str, default = './results/')
 ### ----Data Parameters----
-parser.add_argument('--dataset_name', type = str)
+parser.add_argument('--dataset_name', type = str, help= 'load <data_dir>/<dataset_name>.h5ad')
 parser.add_argument('--raw',        type = int, default = 1, choices = [0, 1], help = 'use raw data or normalized data')
-parser.add_argument('--batch_size', type = int)
+parser.add_argument('--preprocess_data',     type = int, default = 0, choices = [0, 1], help = 'preprocess data or not')
+parser.add_argument('--filter_gene_by_counts', type = int, default = 500, help = 'minimum counts for genes')
+parser.add_argument('--filter_cell_by_counts', type = int, default = 1000, help = 'minimum counts for cells')
+parser.add_argument('--normalize_total', type = float, default = 1e4, help = 'total counts for normalization')
+parser.add_argument('--log1p',     type = int, default = 1, choices = [0, 1], help = 'log1p normalization or not')
 parser.add_argument('--topngene',   type = int, help = 'number of genes to select')
+parser.add_argument('--batch_size', type = int)
 parser.add_argument('--test_ratio', type = float, default = 0.1)
 parser.add_argument('--data_balance', type = int, default = 1, choices = [0, 1], help = 'use weighted sampling for training data or not')
 parser.add_argument('--new_label',  type = int, default = 0, choices = [0, 1], help = 'use previous predicted label as target or not')
@@ -373,9 +376,9 @@ parser.add_argument('--protocorr',      type = int, default = 0, choices = [0, 1
 parser.add_argument('--distance_dist',       type = int, default = 0, choices = [0, 1], help = 'plot latent distance distribution to prototypes')
 
 parser.add_argument('--prp',            type = int, default = 1, choices = [0, 1], help = 'generate all PRP based explanations')
-parser.add_argument('--lrp',            type = int, default = 1, choices = [0, 1], help = 'generate LRP based explanations')
 parser.add_argument('--plot_prp',       type = int, default = 0, choices = [0, 1], help = 'plot all PRP explanation plots')
-parser.add_argument('--plot_lrp',       type = int, default = 0, choices = [0, 1], help = 'plot LRP explanation plots')
+# parser.add_argument('--lrp',            type = int, default = 1, choices = [0, 1], help = 'generate LRP based explanations')
+# parser.add_argument('--plot_lrp',       type = int, default = 0, choices = [0, 1], help = 'plot LRP explanation plots')
 
 
 args = parser.parse_args()
@@ -438,18 +441,15 @@ if args.model_mode in ["apply"]:
     args.lrp = 0 if args.pretrain_model_pth is not None else args.lrp
         
 
-args.lrp_path = args.results_dir + 'lrp/'
 args.prp_path = args.results_dir + 'prp/'
 if args.prp:
     makedir(args.prp_path)
     args.plot_prp = 1
 
-if args.lrp:
-    makedir(args.lrp_path)
-    args.plot_lrp = 1
-
-
-
+# args.lrp_path = args.results_dir + 'lrp/'
+# if args.lrp:
+#     makedir(args.lrp_path)
+#     args.plot_lrp = 1
 
 
 print('------args---------')

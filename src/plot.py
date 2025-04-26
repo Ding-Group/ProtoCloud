@@ -329,13 +329,6 @@ def plot_distance_to_prototypes(args, data):
         
         sns.kdeplot(distances, label=c, fill=False, color=palette[i], lw=2, alpha=0.8)
         class_colors[c] = palette[i]
-    # # label class with min/max variance
-    # minvar_class = min(variances, key=variances.get)
-    # plt.annotate(minvar_class, 
-    #              xy=(-1.5, 1.5), color=class_colors[minvar_class])
-    # maxmean_class = max(means, key=means.get)
-    # plt.annotate(maxmean_class, 
-    #              xy=(np.max(means[maxmean_class])*1.25, 0.75), color=class_colors[maxmean_class])
 
     ncol = 1 if len(classes) < 15 else len(classes)//15
     plt.legend(title='Celltype', bbox_to_anchor=(1.05, 1), loc=2, borderaxespad=0., ncol=ncol)
@@ -355,8 +348,6 @@ def plot_distance_to_prototypes(args, data):
     plt.close()
     print("\tDistance distribution to prototypes saved")
 
-# Call the function with appropriate arguments
-# plot_distance_to_prototypes(args, data)
 
 
 
