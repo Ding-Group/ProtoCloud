@@ -375,10 +375,10 @@ parser.add_argument('--two_latent',        type = int, default = 0, choices = [0
 parser.add_argument('--protocorr',      type = int, default = 0, choices = [0, 1], help = 'plot prototype correlation')
 parser.add_argument('--distance_dist',       type = int, default = 0, choices = [0, 1], help = 'plot latent distance distribution to prototypes')
 
-parser.add_argument('--prp',            type = int, default = 1, choices = [0, 1], help = 'generate all PRP based explanations')
+parser.add_argument('--prp',            type = int, default = 0, choices = [0, 1], help = 'generate all PRP based explanations')
 parser.add_argument('--plot_prp',       type = int, default = 0, choices = [0, 1], help = 'plot all PRP explanation plots')
-# parser.add_argument('--lrp',            type = int, default = 1, choices = [0, 1], help = 'generate LRP based explanations')
-# parser.add_argument('--plot_lrp',       type = int, default = 0, choices = [0, 1], help = 'plot LRP explanation plots')
+parser.add_argument('--lrp',            type = int, default = 1, choices = [0, 1], help = 'generate LRP based explanations')
+parser.add_argument('--plot_lrp',       type = int, default = 0, choices = [0, 1], help = 'plot LRP explanation plots')
 
 
 args = parser.parse_args()
@@ -446,10 +446,10 @@ if args.prp:
     makedir(args.prp_path)
     args.plot_prp = 1
 
-# args.lrp_path = args.results_dir + 'lrp/'
-# if args.lrp:
-#     makedir(args.lrp_path)
-#     args.plot_lrp = 1
+args.lrp_path = args.results_dir + 'lrp/'
+if args.lrp:
+    makedir(args.lrp_path)
+    args.plot_lrp = 1
 
 
 print('------args---------')

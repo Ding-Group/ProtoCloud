@@ -10,8 +10,6 @@ from src.utils import *
 import src.glo as glo
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 num_workers = 4 if torch.cuda.is_available() else 0
-# from PIL import Image
-# from settings import *
 
 EPS = glo.get_value('EPS')
 LRP_FILTER_TOP_K = glo.get_value('LRP_FILTER_TOP_K')
@@ -156,7 +154,6 @@ def x_prp(model, input, prototype, epsilon):
     x.requires_grad = True
 
     with torch.enable_grad():
-        ## backward参数: https://blog.csdn.net/sinat_28731575/article/details/90342082
         if model.raw_input:
             x = torch.log(x + 1)
             x.retain_grad()
@@ -164,8 +161,6 @@ def x_prp(model, input, prototype, epsilon):
         zx_mean = model.z_mean(zx_mean)
 
         half_dim = prototype.shape[0] // 2
-        # Equation 7 in the paper
-        # d = (zx_mean - prototype)**2
         d = (zx_mean[:, :half_dim] - prototype[:half_dim])**2
         R_zx = 1 / (d + epsilon)            # relavance of prototype to z_mu
 
@@ -246,7 +241,6 @@ def generate_PRP_explanations(model,    # model_wrapped
     for c in range(num_classes):
         try:
             idx = np.where(train_Y == c)[0]
-            # print("PRP",c ,len(idx))
             class_prp = []
             # for each class, get the PRP genes of each prototype
             for pno in range(prototypes_per_class):
@@ -283,11 +277,11 @@ def generate_LRP_explanations(model,    # model_wrapped
         try:
             idx = np.where(test_Y == c)[0]
             # save celltype corresponding LRP genes
-            rel = x_lrp(model, test_X[idx, :])   # [n, 3346]
+            rel = x_lrp(model, test_X[idx, :])   # [n, G]
             path = lrp_path + c.replace("/", " OR ") + '_'
             save_file(rel, path, exp_code, "_lrp")
-            rel_sum = np.sum(rel, axis = 0)   # [1, 3346]
-            rel_sum = scaler.fit_transform(rel_sum.T).T
+            rel_sum = np.sum(rel, axis = 0).reshape(1, -1)  # (1, G)
+            rel_sum = scaler.fit_transform(rel_sum.T).T.flatten()
             path = lrp_path + c.replace("/", " OR ") + '_'
             save_file(rel_sum, path, exp_code, "_relgenes")
 
@@ -307,7 +301,6 @@ def save_prp_genes(rel, gene_names, write_path):
     write_path: prp_result_path + str(pno) + '_class' + str(c) + '/'
     """
     rel = rel.detach().numpy()  # torch.Size([n, 3346])
-    # print("rel.shape:",rel.shape, rel.min(), rel.max())     # (n, 3346) -735059.56 1231311.0
     normalized_rel = 2 * ((rel - rel.min()) / (rel.max() - rel.min())) - 1    # [-1,1]
 
     # get top 100 freq genes for the class c prototype pno
