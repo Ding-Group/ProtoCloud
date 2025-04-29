@@ -1,46 +1,60 @@
-# protoCloud
+# ProtoCloud
 
 ProtoCloud is a prototype-based interpretable deep learning model for single-cell RNA sequence analysis. It combines variational autoencoder (VAE) architecture with prototype learning to provide both cell type classification and interpretable features.
 
+## Installation
+Dependencies:
+  - numpy>=1.26.4
+  - pandas>=2.2.2
+  - scipy>=1.13.1
+  - scanpy>=1.10.2
+  - anndata>=0.10.8
+  - scikit-learn
+  - pytorch>=1.12.1
+  - torchvision>=0.13.1
+  - matplotlib
+  - matplotlib_venn
+  - seaborn
+  - umap-learn
+
 ## Usage
 
-### Basic Usage
+ProtoCloud can be used in **two different ways: via terminal call or package installation** —whichever fits best with your workflow.
+
+---
+### 1. Command-line interface (quick start) 
+
+
+Run the model straight from the terminal after cloning the repository:
 
 ```bash
-python main.py --dataset_name PBMC_10K --model_mode train
+python src/ProtoCloud/main.py --dataset_name PBMC_10K --model_mode train
 ```
 
-### Running Modes
 
-ProtoCloud supports four running modes:
+ProtoCloud supports four running modes by `--model_mode`:
 
-```bash
-# Train a new model
-python main.py --model_mode train
+| Option  | Description                |
+| ------- | -------------------------- |
+| `train` | Train the model |
+| `test`  | Test the model on test data |
+| `apply` | Apply the model to all data with reparametrization |
+|  `plot` | Load and plot result files using test data |
 
-# Test the model on test data
-python main.py --model_mode test
 
-# Apply the model to all data with reparametrization
-python main.py --model_mode apply
-
-# Load and plot result files using test data
-python main.py --model_mode plot
-```
-
-## Parameters
+#### Parameters
 
 This document provides an overview of the parameters used in the ProtoCloud. Please review and modify these parameters according to your needs.
 
-### Path Parameters
+**Path Parameters:**
 
-| Parameter | Description | Default |
-|-----------|-------------|---------|
-| `--data_dir` | Directory for input data | `./data/` |
-| `--model_dir` | Directory for saved models | `./saved_models/` |
-| `--results_dir` | Directory for results | `./results/` |
+| Parameter       | Description                | Default           |
+| --------------- | -------------------------- | ----------------- |
+| `--data_dir`    | Directory for input data   | `./data/`         |
+| `--model_dir`   | Directory for saved models | `./saved_models/` |
+| `--results_dir` | Directory for results      | `./results/`      |
 
-### Data Parameters
+**Data Parameters:**
 
 | Parameter | Description | Default |
 |-----------|-------------|---------|
@@ -53,7 +67,7 @@ This document provides an overview of the parameters used in the ProtoCloud. Ple
 | `--new_label` | Use previous predicted label as target (1) or not (0) | `0` |
 | `--index_file` | Full path of split indices with columns train_idx and test_idx | `None` |
 
-### Model Parameters
+**Model Parameters:** 
 
 | Parameter | Description | Default |
 |-----------|-------------|---------|
@@ -66,7 +80,7 @@ This document provides an overview of the parameters used in the ProtoCloud. Ple
 | `--prototypes_per_class` | Number of prototypes per class | `6` |
 | `--latent_dim` | Dimension of latent space | `20` |
 
-### Loss Function Parameters
+**Loss Function Parameters:**
 
 | Parameter | Description | Default |
 |-----------|-------------|---------|
@@ -77,7 +91,7 @@ This document provides an overview of the parameters used in the ProtoCloud. Ple
 | `--ortho_coef` | Orthogonality loss coefficient | `0.3` |
 | `--atomic_coef` | Atomic loss coefficient | `1` |
 
-### Network Parameters
+**Network Parameters:**
 
 | Parameter | Description | Default |
 |-----------|-------------|---------|
@@ -85,7 +99,7 @@ This document provides an overview of the parameters used in the ProtoCloud. Ple
 | `--epochs` | Number of training epochs | `100` |
 | `--seed` | Random seed | `7` |
 
-### Results and Visualization Parameters
+**Results and Visualization Parameters:**
 
 | Parameter | Description | Default |
 |-----------|-------------|---------|
@@ -98,54 +112,61 @@ This document provides an overview of the parameters used in the ProtoCloud. Ple
 | `--protocorr` | Plot prototype correlation | `0` |
 | `--distance_dist` | Plot latent distance distribution to prototypes | `0` |
 
-### Explainability Parameters
+**Explainability Parameters:**
 
-| Parameter | Description | Default |
-|-----------|-------------|---------|
-| `--prp` | Generate all PRP-based explanations | `1` |
-| `--lrp` | Generate LRP-based explanations | `1` |
-| `--plot_prp` | Plot all PRP explanation plots | `0` |
-| `--plot_lrp` | Plot LRP explanation plots | `0` |
+| Parameter    | Description                     | Default |
+| ------------ | ------------------------------- | ------- |
+| `--lrp`      | Generate LRP-based explanations | `1`     |
+| `--plot_lrp` | Plot LRP explanation plots      | `0`     |
 
-## Examples
+#### Examples
 
-### Training a model with custom parameters
+**Apply new dataset to a pre-trained model:**
 
 ```bash
-python main.py \
-  --model_mode train \
-  --dataset_name PBMC_10K \
-  --raw 1 \
-  --batch_size 256 \
-  --test_ratio 0.2 \
-  --latent_dim 30 \
-  --prototypes_per_class 8 \
-  --encoder_layer_sizes 128 64 \
-  --decoder_layer_sizes 64 128 \
-  --epochs 200
-```
-
-### Testing a pre-trained model
-
-```bash
-python main.py \
-  --model_mode test \
+python src/ProtoCloud/main.py \
+  --dataset <data_name>
+  --model_mode apply \
   --pretrain_model_pth ./saved_models/my_model.pth \
-  --save_file 1 \
-  --visual_result 1
 ```
 
 
+**Continue training on existing model:**
 
-#### Example Usage
-To train the Prototype VAE model using the `PBMC_10K` dataset, use the following command:
+```bash
+python src/ProtoCloud/main.py \
+  --dataset <data_name>
+  --model_mode train \
+  --cont_train 1 \
+  --epochs 30 \
+  --pretrain_model_pth ./saved_models/<my_model>.pth
+  # <Optional> To use predicted label as new label, you must apply the new data first
+  --new_label 1 \
+  --results_dir <path_to_applied_result_path>
 ```
-python main.py --dataset PBMC_10K --model_mode train
+
+### 2. As a Python package
+
+Install ProtoCloud, and you can import and call it in your own code:
+
+```python
+import ProtoCloud
+
+model = ProtoCloud.protoCloud(
+                        input_dim = <num_of_genes>
+                        num_classes = <num_of_celltypes>
+                        ).to(<device>)
+ProtoCloud.model.run_model(model, 
+                        <train_X>, <train_Y>,
+                        test_X = <test_X>, test_Y = <test_y>, 
+                        )
+prediction = ProtoCloud.model.get_predictions(model, <test_X>)
 ```
+
 
 
 ## Reference
-The code is built upon protoVAE (https://github.com/SrishtiGautam/ProtoVAE) and LRP implementation from https://github.com/AlexBinder/LRP_Pytorch_Resnets_Densenet.
+The code is built upon protoVAE (https://github.com/SrishtiGautam/ProtoVAE) and LRP implementation from https://github.com/AlexBinder/LRP_Pytorch_Resnets_Densenet. We thank the respective authors for making their code available to the community.
 
 
 ## License
@@ -153,4 +174,3 @@ The code is built upon protoVAE (https://github.com/SrishtiGautam/ProtoVAE) and 
 This project is licensed under the MIT License - see the LICENSE file for details.
 
 For detailed information about each parameter and its impact on the ProtoCloud model, please refer to the code documentation and relevant literature.
-

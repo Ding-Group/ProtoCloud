@@ -12,10 +12,10 @@ import matplotlib.lines as mlines
 from matplotlib.pyplot import show
 from matplotlib.collections import QuadMesh
 from matplotlib_venn import venn2
-# import venn
 
-from src.utils import *
-import src.glo as glo
+
+from ..utils import *
+import ProtoCloud.glo as glo
 EPS = glo.get_value('EPS')
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 num_workers = 4 if torch.cuda.is_available() else 0

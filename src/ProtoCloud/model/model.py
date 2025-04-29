@@ -5,11 +5,11 @@ import torch.nn.functional as F
 from torch.distributions import Distribution, Gamma, Poisson
 import numpy as np
 
-from src.utils import seed_torch, log_likelihood_nb, one_hot_encoder
-import src.glo as glo
-glo._init()
+from ProtoCloud import glo
 glo.set_value('EPS', 1e-16)
 glo.set_value('LRP_FILTER_TOP_K', 0.1)
+
+from .utils import seed_torch, log_likelihood_nb, one_hot_encoder
 
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 num_workers = 4 if torch.cuda.is_available() else 0
@@ -48,12 +48,12 @@ def form_block(in_dim, out_dim,
     
 class protoCloud(nn.Module):
     def __init__(self, input_dim:int,
-                 num_prototypes_per_class:int, 
                  num_classes:int,  
-                 latent_dim:int, 
-                 raw_input:int, 
+                 latent_dim:int = 20, 
+                 raw_input:int = 1, 
                  encoder_layer_sizes: Optional[list] = None,
                  decoder_layer_sizes: Optional[list] = None,
+                 num_prototypes_per_class:int = 6, 
                  activation: Literal['relu', 'leakyrelu'] = 'relu', 
                  use_bias:bool = False,
                  use_dropout:float = 0,

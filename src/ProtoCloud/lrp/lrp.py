@@ -5,12 +5,12 @@ import matplotlib.pyplot as plt
 from matplotlib.pyplot import show
 from sklearn.preprocessing import MinMaxScaler
 
-from src.lrp_general import *
-from src.utils import *
-import src.glo as glo
+from .lrp_general import *
+from ..utils import *
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 num_workers = 4 if torch.cuda.is_available() else 0
 
+import ProtoCloud.glo as glo
 EPS = glo.get_value('EPS')
 LRP_FILTER_TOP_K = glo.get_value('LRP_FILTER_TOP_K')
 
@@ -67,7 +67,7 @@ class model_canonized():
 
 
     ############# Main Function ###############
-    def copyfrommodel(self, model, net, lrp_params, lrp_layer2method, single_linear=False):
+    def copyfrommodel(self, model, net, lrp_layer2method=lrp_layer2method, lrp_params=lrp_params_def1, single_linear=False):
         """
         Args:
             model: new protoCloud.features
@@ -280,7 +280,7 @@ def generate_LRP_explanations(model,    # model_wrapped
             rel = x_lrp(model, test_X[idx, :])   # [n, G]
             path = lrp_path + c.replace("/", " OR ") + '_'
             save_file(rel, path, exp_code, "_lrp")
-            rel_sum = np.sum(rel, axis = 0).reshape(1, -1)  # (1, G)
+            rel_sum = np.sum(rel, axis = 0).reshape(1, -1)   # (1, G)
             rel_sum = scaler.fit_transform(rel_sum.T).T.flatten()
             path = lrp_path + c.replace("/", " OR ") + '_'
             save_file(rel_sum, path, exp_code, "_relgenes")
@@ -289,7 +289,7 @@ def generate_LRP_explanations(model,    # model_wrapped
             rel_sum = z_recon(model, test_X[idx, :])
             save_file(rel_sum, path, exp_code, "_latents")
         except Exception as e:
-            print(f"Error in generate LRP for {cell_types[c]}: {e}")
+            print(f"Error in generate LRP for {c}: {e}")
         
     print("Saved LRP genes for each class")
         

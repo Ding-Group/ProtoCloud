@@ -4,7 +4,7 @@ import torch.nn as nn
 import copy
 import torch.nn.functional as F
 
-import src.glo as glo
+import ProtoCloud.glo as glo
 EPS = glo.get_value('EPS')
 LRP_FILTER_TOP_K = glo.get_value('LRP_FILTER_TOP_K')
 

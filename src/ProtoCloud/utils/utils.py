@@ -14,7 +14,8 @@ from matplotlib import pyplot as plt
 import seaborn as sns
 import joblib
 
-import src.glo as glo
+import ProtoCloud
+from ProtoCloud import glo
 EPS = glo.get_value('EPS')
 
 
@@ -26,125 +27,6 @@ def makedir(path):
     '''
     if not os.path.exists(path):
         os.makedirs(path)
-
-
-def seed_torch(device, seed = 7, msg=True):
-    """
-    Sets Seed for reproducible experiments.
-    """
-    if msg:
-        print("Global seed set to {}".format(seed))
-    
-    random.seed(seed)
-    os.environ['PYTHONHASHSEED'] = str(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    if device.type == 'cuda':
-        torch.cuda.manual_seed(seed)
-        torch.cuda.manual_seed_all(seed)
-    torch.backends.cudnn.benchmark = False
-    torch.backends.cudnn.deterministic = True
-
-
-def save_model_dict(model_dict, model_path):
-    with open(model_path + 'model_dict.pkl', 'wb') as f:
-        pickle.dump(model_dict, f)
-    print("model dict saved")
-
-
-def load_model_dict(model_path, device="cpu"):
-    with open(os.path.join(model_path, 'model_dict.pkl'), 'rb') as f:
-        state_dict = pickle.load(f)
-    # path = os.path.join(model_path, 'model_dict.pkl')
-    # state_dict = torch.load(path, map_location=device)
-    return state_dict
-
-
-
-### data processing
-#######################################################
-def one_hot_encoder(target, n_cls):
-    assert torch.max(target).item() <= n_cls
-
-    target = target.view(-1, 1)
-    onehot = torch.zeros(target.size(0), n_cls)
-    onehot = onehot.to(target.device)
-    onehot.scatter_(1, target.long(), 1)
-
-    return onehot
-
-
-def load_var_names(filename):
-    import h5py
-    
-    with h5py.File(filename, 'r') as f:
-        var_names = [name.decode('utf-8') for name in f['var']['gene_name']]
-    return var_names
-
-
-
-# def ordered_class(data, args):
-#     """
-#     Return the ordered class index for the dataset.
-#     For RGC: sorted by celltype number
-#     Others: sorted by similiar celltypes
-#     """
-#     # if args.dataset == 'RGC':
-#     #     # Sort by extracting the number at the beginning of each string
-#     #     sorted_label = sorted(data.cell_encoder.classes_, key=lambda x: int(x.split('_')[0]))
-#     #     sorted_index = data.cell_encoder.transform(sorted_label)
-#     #     return sorted_index
-#     # else:
-#     #     return data.cell_encoder.transform(data.cell_encoder.classes_)
-#     return data.cell_encoder.transform(data.cell_encoder.classes_)
-
-
-def data_info_saver(info, model_dir, file_name, **kwargs):
-    # save model-relate data info for reuse
-    if file_name == 'cell_encoder':   # save label encoder
-        joblib.dump(info, os.path.join(model_dir, 'cell_encoder.joblib'))
-    elif file_name == 'gene_names':
-        with open(os.path.join(model_dir, 'gene_names.txt'), 'w') as f:
-            for gene in info:
-                f.write(f"{gene}\n")
-    elif file_name == 'cls_threshold':
-        info.to_csv(os.path.join(model_dir, 'cls_threshold.csv'))
-    else:
-        raise NotImplementedError()
-
-
-def data_info_loader(file_name, model_dir):
-    if file_name == 'cell_encoder':     # load LabelEncoder
-        return joblib.load(os.path.join(model_dir, 'cell_encoder.joblib'))
-    elif file_name == 'gene_names':
-        with open(os.path.join(model_dir, 'gene_names.txt'), 'r') as f:
-            gene_names = [line.strip() for line in f.readlines()]
-        return gene_names
-    elif file_name == 'cls_threshold':
-        return pd.read_csv(os.path.join(model_dir, 'cls_threshold.csv'))
-    else:
-        raise NotImplementedError()
-
-
-def all_to_coo(X):
-    """
-    Convert dense numpy array and other sparse matrix format to torch.sparse_coo Tensor
-    """
-    if not sparse.isspmatrix(X):
-        X = sparse.coo_matrix(X)
-    elif not sparse.isspmatrix_coo(X):
-        X = X.tocoo()
-    else:
-        pass
-
-    indices = torch.LongTensor([X.row, X.col])
-    values = torch.FloatTensor(X.data, dtype=torch.float32)
-    shape = torch.Size(X.shape)
-
-    pt_tensor = torch.sparse.FloatTensor(indices, values, shape)
-    return pt_tensor
-
-
 
 
 
@@ -175,29 +57,6 @@ def get_custom_exp_code(model_name, lr, epochs, batch_size,
 
     return param_code
 
-
-
-### Model Assistance
-#######################################################
-def log_likelihood_nb(x, mu, theta, eps = EPS):
-    # theta should be 1 / r, here theta = r
-    log_mu_theta = torch.log(mu + theta + eps)
-
-    ll = torch.lgamma(x + theta) - torch.lgamma(theta) - torch.lgamma(x + 1) \
-        + theta * (torch.log(theta + eps) - log_mu_theta) \
-        + x * (torch.log(mu + eps) - log_mu_theta)
-
-    del log_mu_theta
-    torch.cuda.empty_cache()
-
-    return ll
-
-
-def log_likelihood_normal(x, mu, logvar):
-    var = torch.exp(logvar)
-    ll = -0.5 * len(x) * torch.log(2 * math.pi * var) \
-                        - torch.sum((x - mu) ** 2) / (2 * var)
-    return ll
 
 
 
@@ -342,11 +201,11 @@ def process_prediction_file(predicted, model_encoder, label=None, model_dir=None
     predicted['label'] = label
 
     predicted = pd.DataFrame(predicted)
-    print(predicted.head())
+    # print(predicted.head())
     
     # Prediction
     predicted = get_threshold(predicted, model_dir)
-    print(predicted.head())
+    # print(predicted.head())
     predicted = identify_TypeError(predicted)
     return predicted
 
@@ -357,7 +216,7 @@ def get_threshold(predicted, model_dir=None):
     Load or compute class threshold
     """
     if model_dir is not None:
-        cls_threshold = data_info_loader("cls_threshold", model_dir)
+        cls_threshold = ProtoCloud.data.info_loader("cls_threshold", model_dir)
         celltypes = np.unique(cls_threshold['label'].values)
         for c in celltypes:
             predicted.loc[predicted['pred1'] == c, "ll_threshold"] = cls_threshold.loc[cls_threshold['label'] == c, "ll_threshold"].values[0]

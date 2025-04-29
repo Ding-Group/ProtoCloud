@@ -1,0 +1,30 @@
+[build-system]                  # pip 该用什么来构建
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ProtoCloud"             # pip install ProtoCloud
+version = "0.1.0"
+description = ""
+authors = [
+    {name = "Kaiyun Guo"},
+    ]
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.9"
+
+dependencies = [
+    "numpy>=1.26.4",
+    "pandas>=2.2.2",
+    "scipy>=1.13.1",
+    "scanpy>=1.10.2",
+    "anndata>=0.10.8",
+    "scikit-learn",
+    "torch>=1.12.1",
+    "torchvision>=0.13.1",
+    "matplotlib",
+    "matplotlib-venn",
+    "seaborn",
+    "umap-learn",
+]
+
