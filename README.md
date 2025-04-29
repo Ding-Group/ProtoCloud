@@ -25,20 +25,20 @@ ProtoCloud can be used in **two different ways: via terminal call or package ins
 ### 1. Command-line interface (quick start) 
 
 
-Run the model straight from the terminal after cloning the repository:
+Run the model straight from the terminal after cloning the repository. Datasets must be stored in the `data/` directory as `<dataset>.h5ad` files, annotated with a `celltype` column in `adata.obs` and a `gene_name` column in `adata.var`.
 
 ```bash
-python src/ProtoCloud/main.py --dataset_name PBMC_10K --model_mode train
+python src/ProtoCloud/main.py --dataset_name <dataset> --model_mode train
 ```
 
 
-ProtoCloud supports four running modes by `--model_mode`:
+ProtoCloud supports four running modes by `--model_mode`, default mode is `apply`:
 
 | Option  | Description                |
 | ------- | -------------------------- |
 | `train` | Train the model |
 | `test`  | Test the model on test data |
-| `apply` | Apply the model to all data with reparametrization |
+| `apply` | Apply the model to whole dataset |
 |  `plot` | Load and plot result files using test data |
 
 
@@ -62,16 +62,15 @@ This document provides an overview of the parameters used in the ProtoCloud. Ple
 | `--raw` | Use raw data (1) or normalized data (0) | `1` |
 | `--batch_size` | Batch size for training | `128` |
 | `--topngene` | Number of genes to select | - |
-| `--test_ratio` | Ratio of test data | `0.1` |
-| `--data_balance` | Use weighted sampling for training data (1) or not (0) | `1` |
+| `--test_ratio` | Ratio of test data | `0.2` |
+| `--data_balance` | Balance training data (1) or not (0) | `1` |
 | `--new_label` | Use previous predicted label as target (1) or not (0) | `0` |
-| `--index_file` | Full path of split indices with columns train_idx and test_idx | `None` |
+| `--index_file` | Path of split indices `.csv` file with columns `train_idx` and `test_idx` | `None` |
 
 **Model Parameters:** 
 
 | Parameter | Description | Default |
 |-----------|-------------|---------|
-| `--model_name` | Name of the model | `protoCloud` |
 | `--cont_train` | Load existing model and continue training | `0` |
 | `--model_validation` | Show validation accuracy in training stage | `1` |
 | `--pretrain_model_pth` | Full path of pre-trained model to load | - |
@@ -84,7 +83,6 @@ This document provides an overview of the parameters used in the ProtoCloud. Ple
 
 | Parameter | Description | Default |
 |-----------|-------------|---------|
-| `--obs_dist` | Observation distribution ('nb' or 'normal') | `nb` |
 | `--two_step` | Use two-step training (1) or not (0) | `1` |
 | `--recon_coef` | Reconstruction loss coefficient | `10` |
 | `--kl_coef` | KL divergence loss coefficient | `2` |
