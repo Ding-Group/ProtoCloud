@@ -30,7 +30,7 @@ def parse_args() -> argparse.Namespace:
     #######################################################
     ### ----Model Parameters----
     parser.add_argument('--model_name',       type = str, default = 'protoCloud')
-    parser.add_argument('--model_mode',  type = str, default = "apply", choices = ["train", "test", "apply", "plot"],
+    parser.add_argument('--model_mode',  type = str, default = "test", choices = ["train", "test", "apply", "plot"],
                         help = "train model; test: z_mu for pred; apply: all data with reparametrization; plot: load and plot result files using test data")
     parser.add_argument('--cont_train',  type = int, default = 0, help = 'Load existing model and continue training')
     parser.add_argument('--model_validation',  type = int, default = 1, choices = [0, 1], help = 'validation accuracy in training stage')
