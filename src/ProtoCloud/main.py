@@ -69,8 +69,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument('--protocorr',      type = int, default = 0, choices = [0, 1], help = 'plot prototype correlation')
     parser.add_argument('--distance_dist',       type = int, default = 0, choices = [0, 1], help = 'plot latent distance distribution to prototypes')
 
-    # parser.add_argument('--prp',            type = int, default = 1, choices = [0, 1], help = 'generate all PRP based explanations')
-    # parser.add_argument('--plot_prp',       type = int, default = 0, choices = [0, 1], help = 'plot all PRP explanation plots')
+    parser.add_argument('--prp',            type = int, default = 1, choices = [0, 1], help = 'generate all PRP based explanations')
+    parser.add_argument('--plot_prp',       type = int, default = 0, choices = [0, 1], help = 'plot all PRP explanation plots')
     parser.add_argument('--lrp',            type = int, default = 1, choices = [0, 1], help = 'generate LRP based explanations')
     parser.add_argument('--plot_lrp',       type = int, default = 0, choices = [0, 1], help = 'plot LRP explanation plots')
 
@@ -132,10 +132,10 @@ def parse_args() -> argparse.Namespace:
         args.lrp = 0 if args.pretrain_model_pth is not None else args.lrp
             
 
-    # args.prp_path = args.results_dir + 'prp/'
-    # if args.prp:
-    #     ProtoCloud.utils.makedir(args.prp_path)
-    #     args.plot_prp = 1
+    args.prp_path = args.results_dir + 'prp/'
+    if args.prp:
+        ProtoCloud.utils.makedir(args.prp_path)
+        args.plot_prp = 1
 
     args.lrp_path = args.results_dir + 'lrp/'
     if args.lrp:
@@ -390,7 +390,7 @@ def main() -> None:
 
     #######################################################
     # LRP based explanations & marker gene selection
-    if args.lrp:
+    if args.prp or args.lrp:
         print("\nGenerating model explanations")
         wrapper = ProtoCloud.lrp.model_canonized()
         # construct the model for generating LRP based explanations
@@ -399,29 +399,42 @@ def main() -> None:
         wrapper.copyfrommodel(model_wrapped, 
                               model)
         print("\tModel wrapped")
-
+        if args.prp:
+            try:
+                ProtoCloud.prp.generate_PRP_explanations(model_wrapped, 
+                                     model.prototype_vectors, 
+                                     train_X[:8000], train_Y[:8000], 
+                                     data,
+                                     model.epsilon, 
+                                     **args_dict,
+                                     )
+            except Exception as e:
+                 print(f"Error in generate PRP: {e}")
         if args.lrp:
-            ProtoCloud.lrp.generate_LRP_explanations(model_wrapped, 
-                                test_X, test_Y,
-                                data.cell_encoder.classes_, data.gene_names,
-                                model.epsilon, 
-                                **args_dict,
-                                )
+            try:
+                ProtoCloud.lrp.generate_LRP_explanations(model_wrapped, 
+                                     test_X, test_Y,
+                                     data.cell_encoder.classes_, data.gene_names,
+                                     model.epsilon, 
+                                     **args_dict,
+                                     )
+            except Exception as e:
+                 print(f"Error in generate LRP: {e}")
 
 
-    # if args.plot_prp:
-    #     print("Ploting PRP visulization")
-    #     ProtoCloud.vis.plot_prp_dist(data.cell_encoder.classes_, data.gene_names, **args_dict)
-    #     ProtoCloud.vis.plot_marker_venn_diagram(data.adata, **args_dict)
-    #     ProtoCloud.vis.plot_top_gene_PRP_dotplot(data.cell_encoder.classes_, data.gene_names, 
-    #                             num_protos = 1, top_num_genes = 10, 
-    #                             celltype_specific = False, save_markers = False, **args_dict)
-    #     ProtoCloud.vis.plot_top_gene_PRP_dotplot(data.cell_encoder.classes_, data.gene_names, 
-    #                             num_protos = 1, top_num_genes = 10, 
-    #                             celltype_specific = True, save_markers = False, **args_dict)
-    if args.plot_lrp:
-        print("Ploting LRP visulization")
-        ProtoCloud.vis.plot_lrp_dist(data.cell_encoder.classes_, data.gene_names, **args_dict)
+    if args.plot_prp:
+        print("Ploting PRP visulization")
+        ProtoCloud.vis.plot_prp_dist(data.cell_encoder.classes_, data.gene_names, **args_dict)
+        ProtoCloud.vis.plot_marker_venn_diagram(data.adata, **args_dict)
+        ProtoCloud.vis.plot_top_gene_PRP_dotplot(data.cell_encoder.classes_, data.gene_names, 
+                                num_protos = 1, top_num_genes = 10, 
+                                celltype_specific = False, save_markers = False, **args_dict)
+        ProtoCloud.vis.plot_top_gene_PRP_dotplot(data.cell_encoder.classes_, data.gene_names, 
+                                num_protos = 1, top_num_genes = 10, 
+                                celltype_specific = True, save_markers = False, **args_dict)
+    # if args.plot_lrp:
+    #     print("Ploting LRP visulization")
+    #     ProtoCloud.vis.plot_lrp_dist(data.cell_encoder.classes_, data.gene_names, **args_dict)
 
 
     
