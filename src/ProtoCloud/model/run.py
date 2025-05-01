@@ -4,8 +4,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader, TensorDataset
 
-from ProtoCloud.data.scRNAdata import *
-from ProtoCloud.utils.utils import *
+from ..data.scRNAdata import *
+from ..utils.utils import *
 import ProtoCloud.glo as glo
 EPS = glo.get_value('EPS')
 device = 'cuda' if torch.cuda.is_available() else 'cpu'

@@ -28,3 +28,13 @@ dependencies = [
     "umap-learn",
 ]
 
+[tool.setuptools]
+package-dir = {"" = "src"}               # ① 告诉它源码在 src/
+packages = [
+  "ProtoCloud",
+  "ProtoCloud.data",
+  "ProtoCloud.model",
+  "ProtoCloud.utils",
+  "ProtoCloud.vis",
+  "ProtoCloud.lrp",
+]     
