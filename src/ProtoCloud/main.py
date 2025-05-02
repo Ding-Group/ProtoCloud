@@ -165,7 +165,7 @@ def main() -> None:
         # resize data to model input dim
         data.gene_subset(args.pretrain_model_pth)
         data.adata.write(args.results_dir + args.dataset_name + ".h5ad", compression='gzip')
-        ProtoCloud.utils.data_info_saver(data.gene_names, args.model_dir, 'gene_names')
+        ProtoCloud.data.info_saver(data.gene_names, args.model_dir, 'gene_names')
     
 
     print('\nData: ', args.dataset_name)

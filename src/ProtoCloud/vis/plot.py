@@ -174,7 +174,7 @@ def plot_latent_embedding(latent_embedding, proto_embedding=None,
 
 
     # color cells by groundtruth unless DNE use model labels
-    if orig is not None:
+    if not orig.isna().all():
         cell_labels = np.unique(orig)
         y = orig
     else:

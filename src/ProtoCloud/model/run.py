@@ -97,7 +97,8 @@ def run_model(model,
         if (epoch % 10 == 0):
             print_results(epoch, train_acc, train_loss, train_recon, train_kl, \
                             train_ce, train_ortho, train_atomic, is_train=True)
-            print_results(epoch, test_acc, is_train = False)
+            if validate_model:
+                print_results(epoch, test_acc, is_train = False)
         
         train_loss_list.append(train_loss)
         train_acc_list.append(train_acc)
