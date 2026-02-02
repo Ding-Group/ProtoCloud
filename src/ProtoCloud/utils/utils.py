@@ -13,6 +13,8 @@ from sklearn.metrics import confusion_matrix, accuracy_score, balanced_accuracy_
 from matplotlib import pyplot as plt
 import seaborn as sns
 import joblib
+from sklearn.neighbors import NearestNeighbors
+from collections import Counter
 
 import ProtoCloud
 from ProtoCloud import glo
@@ -355,3 +357,29 @@ def rank_HRG(types:list, gene_names, prp_path, filename):
 
         df = df.merge(df1, on='idx')
     return df
+
+
+def calculate_batch_entropy(features, batch_labels, n_neighbors=10):
+    # Calculate k-nearest neighbors
+    nbrs = NearestNeighbors(n_neighbors=n_neighbors + 1).fit(features)
+    _, indices = nbrs.kneighbors(features)
+
+    entropies = []
+
+    for i in range(features.shape[0]):
+        # Get the batch labels of the neighbors (excluding the sample itself)
+        neighbor_batches = batch_labels[indices[i][1:]]
+        batch_counts = Counter(neighbor_batches)
+        total_neighbors = sum(batch_counts.values())
+
+        # Calculate entropy for the current sample
+        entropy = 0.0
+        for batch, count in batch_counts.items():
+            p = count / total_neighbors
+            entropy -= p * np.log(p)
+        
+        entropies.append(entropy)
+    
+    # Calculate and return the average entropy
+    average_entropy = np.mean(entropies)
+    return average_entropy

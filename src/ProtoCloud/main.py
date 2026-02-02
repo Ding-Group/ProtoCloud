@@ -401,7 +401,7 @@ def main() -> None:
         print("\tModel wrapped")
         if args.prp:
             try:
-                ProtoCloud.prp.generate_PRP_explanations(model_wrapped, 
+                ProtoCloud.lrp.generate_PRP_explanations(model_wrapped, 
                                      model.prototype_vectors, 
                                      train_X[:8000], train_Y[:8000], 
                                      data,

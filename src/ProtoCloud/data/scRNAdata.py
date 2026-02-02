@@ -92,12 +92,12 @@ class scRNAData():
                 print(save_path)
                 raise ValueError("Dataset not found!")
         
-        # select top n genes
-        # self.adata.uns['log1p']["base"] = None
-        if isinstance(self.topngene, int):
-            adata = self._top_n_genes(self.topngene, adata, raw=self.raw)
-            top_gene_path = self.data_dir + self.dataset_name + str(self.topngene) + '.h5ad'
-            adata.write(top_gene_path, compression='gzip')
+            # select top n genes
+            # self.adata.uns['log1p']["base"] = None
+            if isinstance(self.topngene, int):
+                adata = self._top_n_genes(self.topngene, adata, raw=self.raw)
+                top_gene_path = self.data_dir + self.dataset_name + str(self.topngene) + '.h5ad'
+                adata.write(top_gene_path, compression='gzip')
         #######################################################
         adata.var_names_make_unique()
         self.adata = adata#[~adata.obs['celltype'].isna(), :]
@@ -439,14 +439,14 @@ class scRNAData():
 
         self.cell_encoder = info_loader('cell_encoder', os.path.dirname(pretrain_model_pth))
         self.celltypes = predicted['pred1'].values
-        print(self.cell_encoder.classes_)
+        # print(self.cell_encoder.classes_)
         print("Using predicted label from pretrained model")
         
         train_idx = np.where(prob_mask)[0]
         test_idx = np.where(~prob_mask)[0]
 
-        print(len(train_idx), max(train_idx), train_idx)
-        print(len(test_idx), max(test_idx), test_idx)
+        # print(len(train_idx), max(train_idx), train_idx)
+        # print(len(test_idx), max(test_idx), test_idx)
 
         return train_idx, test_idx 
 

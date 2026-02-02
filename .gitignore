@@ -2,3 +2,10 @@
 */__pycache__
 saved_models/
 results/
+*.pyc
+*.pyo
+.idea/
+*.egg-info/
+dist/
+build/
+.eggs/
