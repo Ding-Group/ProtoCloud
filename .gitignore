@@ -1,11 +1,36 @@
-*/ProtoCloud.egg-info
-*/__pycache__
-saved_models/
-results/
-*.pyc
-*.pyo
-.idea/
+# --- Python compile ---
+__pycache__/
+*.py[cod]
+*$py.class
+
+# --- pip install -e . ---
 *.egg-info/
-dist/
+.installed.cfg
+pip-log.txt
+pip-delete-this-directory.txt
+
+# --- BUILD ---
 build/
+develop-eggs/
+dist/
+downloads/
+eggs/
 .eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+
+# --- ENV ---
+.venv/
+env/
+venv/
+ENV/
+
+# --- TEST ---
+.pytest_cache/
+.coverage
+htmlcov/
