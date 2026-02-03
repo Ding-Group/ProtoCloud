@@ -4,12 +4,13 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.distributions import Distribution, Gamma, Poisson
 import numpy as np
+import pandas as pd
 
-from ProtoCloud import glo
+import ProtoCloud.glo as glo
 glo.set_value('EPS', 1e-16)
 glo.set_value('LRP_FILTER_TOP_K', 0.1)
 
-from .utils import seed_torch, log_likelihood_nb, one_hot_encoder
+from ..utils import seed_torch, log_likelihood_nb, one_hot_encoder
 
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 num_workers = 4 if torch.cuda.is_available() else 0
@@ -48,12 +49,12 @@ def form_block(in_dim, out_dim,
     
 class protoCloud(nn.Module):
     def __init__(self, input_dim:int,
+                 num_prototypes_per_class:int, 
                  num_classes:int,  
-                 latent_dim:int = 20, 
-                 raw_input:int = 1, 
+                 latent_dim:int, 
+                 raw_input:int, 
                  encoder_layer_sizes: Optional[list] = None,
                  decoder_layer_sizes: Optional[list] = None,
-                 num_prototypes_per_class:int = 6, 
                  activation: Literal['relu', 'leakyrelu'] = 'relu', 
                  use_bias:bool = False,
                  use_dropout:float = 0,
@@ -193,12 +194,11 @@ class protoCloud(nn.Module):
             recon_loss, _ = self.recon_loss(x, max_index, px_mu, px_theta)
 
 
-        prototypes_of_correct_class = torch.t(self.prototype_class_identity[:, target.cpu()])
+        prototypes_of_correct_class = torch.t(self.prototype_class_identity[:, target]).to(device) 
         index_prototypes_of_correct_class = (prototypes_of_correct_class == 1).nonzero(as_tuple = True)[1]
         # class-corresponding prototypes' index for each sample in the batch
         index_prototypes_of_correct_class = index_prototypes_of_correct_class.view(x.shape[0], 
                                                                                    self.num_prototypes_per_class)
-
         # KL divergence loss
         kl_loss, mask = self.kl_divergence_nearest(z_mu, z_logVar, index_prototypes_of_correct_class, sim_scores)
         
@@ -209,7 +209,7 @@ class protoCloud(nn.Module):
         ortho_loss = self.orthogonal_loss()
         
         # Atomic loss
-        atomic_loss = self.atomic_loss(sim_scores, mask)
+        atomic_loss = self.atomic_loss(sim_scores, prototypes_of_correct_class)
 
         return recon_loss, kl_loss, classify_loss, ortho_loss, atomic_loss
 
@@ -252,25 +252,27 @@ class protoCloud(nn.Module):
 
     def kl_divergence_nearest(self, mu, logVar, nearest_pt, sim_scores):
         kl_loss = torch.zeros(sim_scores.shape).to(device) 
-        half_latent = self.latent_dim//2
+        half_latent = self.latent_dim // 2
 
         for i in range(self.num_prototypes_per_class):
             p_v = self.prototype_vectors[nearest_pt[:, i], :]     # all class prototype i vector
-            
+
             kl1 = torch.distributions.kl.kl_divergence(
                 torch.distributions.Normal(mu[:, :half_latent], torch.exp(logVar[:, :half_latent] / 2)),
                 torch.distributions.Normal(p_v[:, :half_latent], torch.ones(p_v[:, :half_latent].shape).to(device))
                 )
+
             kl2 = torch.distributions.kl.kl_divergence(
                 torch.distributions.Normal(mu[:, half_latent:], torch.exp(logVar[:, half_latent:] / 2)),
-                torch.distributions.Normal(p_v[:, half_latent:], torch.ones(p_v[:, half_latent:].shape).to(device))
+                # torch.distributions.Normal(torch.zeros_like(p_v[:, half_latent:]).to(device), torch.ones_like(p_v[:, half_latent:]).to(device))
+                torch.distributions.Normal(torch.zeros_like(p_v[:, half_latent:]), torch.ones_like(p_v[:, half_latent:]).to(device))
                 )
+
             kl = torch.mean(kl1 * 5 + kl2, dim=-1)
             kl_loss[np.arange(sim_scores.shape[0]), nearest_pt[:, i]] = kl
 
         kl_loss = kl_loss * sim_scores    # element-wise scale by similarity scores
         mask = kl_loss > 0 # prototypes contributes
-
         kl_loss = torch.sum(kl_loss, dim = -1) / (torch.sum(sim_scores * mask, dim = -1))
         kl_loss = torch.mean(kl_loss)
 

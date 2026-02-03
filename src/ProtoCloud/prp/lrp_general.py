@@ -61,41 +61,67 @@ class  lrplookupnotfounderror(Exception):
 
 #######################################################
 #######################################################
-def get_lrpwrapperformodule(module, 
-                            lrp_params, 
-                            lrp_layer2method, 
-                            ):
+# def get_lrpwrapperformodule(module, 
+#                             lrp_params, 
+#                             lrp_layer2method, 
+#                             ):
 
+#   autogradfunction = lrp_layer2method
+#   if isinstance(module, nn.ReLU):
+#     return zeroparam_wrapper_class(module, 
+#                                    autogradfunction=autogradfunction)
+
+
+#   elif isinstance(module, nn.BatchNorm1d):
+#     return zeroparam_wrapper_class(module, 
+#                                    autogradfunction=autogradfunction)
+
+
+#   elif isinstance(module, nn.Linear):
+#     if type(autogradfunction) == linearlayer_eps_wrapper_fct:
+#       return oneparam_wrapper_class(module, 
+#                                     autogradfunction = autogradfunction, 
+#                                     parameter1 = lrp_params['linear_eps'])
+#     elif type(autogradfunction) == linearlayer_gamma_wrapper_fct:
+#       return oneparam_wrapper_class(module, 
+#                                     autogradfunction = autogradfunction, 
+#                                     parameter1 = lrp_params['linear_gamma'] )
+#     elif type(autogradfunction) == linearlayer_Alpha1Beta0_wrapper_fct:
+#        return oneparam_wrapper_class(module, 
+#                                     autogradfunction = autogradfunction, 
+#                                     parameter1 = lrp_params['apply_filter'])
+#     elif type(autogradfunction) == linearlayer_Alpha2Beta1_wrapper_fct:
+#        return oneparam_wrapper_class(module, 
+#                                     autogradfunction = autogradfunction, 
+#                                     parameter1 = lrp_params['linear_ignorebias'])
+#     # elif type(autogradfunction) == linearlayer_absZ_wrapper_fct:
+#     #    return oneparam_wrapper_class(module, 
+#     #                                 autogradfunction = autogradfunction, 
+#     #                                 parameter1 = lrp_params['linear_ignorebias'] )
+#     # elif type(autogradfunction) == linearlayer_patternAttribution_wrapper_fct:
+
+#   else:
+#     raise lrplookupnotfounderror( "found no dictionary entry in lrp_layer2method for this module name:", module)
+
+def get_lrpwrapperformodule(module, 
+                            lrp_params, lrp_layer2method):
+  """
+  Args:
+    module: a PyTorch module (e.g., nn.Linear, nn.ReLU)
+    lrp_params: dict of LRP parameters
+    lrp_layer2method: class name of LRP method (autograd function)  
+  """
+  autogradfunction = lrp_layer2method()
+  
   if isinstance(module, nn.ReLU):
-    key='nn.ReLU'
-    if key not in lrp_layer2method:
-      print(key, "not find in lrp_layer2method")
-      raise lrplookupnotfounderror( key, "not find in lrp_layer2method")
-    
-    autogradfunction = lrp_layer2method[key]()  # relu_wrapper_fct()
     return zeroparam_wrapper_class(module, 
                                    autogradfunction=autogradfunction)
-
 
   elif isinstance(module, nn.BatchNorm1d):
-    key='nn.BatchNorm1d'
-    if key not in lrp_layer2method:
-      print(key, "not find in lrp_layer2method")
-      raise lrplookupnotfounderror(key, "not find in lrp_layer2method")
-
-    autogradfunction = lrp_layer2method[key]()  # relu_wrapper_fct()
     return zeroparam_wrapper_class(module, 
                                    autogradfunction=autogradfunction)
 
-
   elif isinstance(module, nn.Linear):
-    key='nn.Linear'
-    if key not in lrp_layer2method:
-      print(key, "not find in lrp_layer2method")
-      raise lrplookupnotfounderror( key, "not find in lrp_layer2method")
-
-    autogradfunction = lrp_layer2method[key]()  # linearlayer_*_wrapper_fct()
-
     if type(autogradfunction) == linearlayer_eps_wrapper_fct:
       return oneparam_wrapper_class(module, 
                                     autogradfunction = autogradfunction, 
@@ -107,18 +133,19 @@ def get_lrpwrapperformodule(module,
     elif type(autogradfunction) == linearlayer_Alpha1Beta0_wrapper_fct:
        return oneparam_wrapper_class(module, 
                                     autogradfunction = autogradfunction, 
-                                    parameter1 = lrp_params['linear_ignorebias'] )
+                                    parameter1 = lrp_params['apply_filter'] )
     elif type(autogradfunction) == linearlayer_Alpha2Beta1_wrapper_fct:
        return oneparam_wrapper_class(module, 
                                     autogradfunction = autogradfunction, 
                                     parameter1 = lrp_params['linear_ignorebias'] )
-    elif type(autogradfunction) == linearlayer_absZ_wrapper_fct:
-       return oneparam_wrapper_class(module, 
-                                    autogradfunction = autogradfunction, 
-                                    parameter1 = lrp_params['linear_ignorebias'] )
+    elif type(autogradfunction) == linearlayer_abs_wrapper_fct:
+       return zeroparam_wrapper_class(module, 
+                                    autogradfunction = autogradfunction)
+    else:
+        raise RuntimeError("Implementation DNE: ", autogradfunction)
 
   else:
-    raise lrplookupnotfounderror( "found no dictionary entry in lrp_layer2method for this module name:", module)
+    raise lrplookupnotfounderror("Found no dictionary entry for this module name:", module)
 
 
 #######################################################
@@ -188,6 +215,76 @@ class batchnorm1d_wrapper_fct(torch.autograd.Function):
 
 
 
+
+class sim_score_eps_wrapper_fct(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, x, module, eps=1e-9):
+        prototypes = module.prototype_vectors.detach().clone()
+        scale = module.scale.detach().clone()
+        latent_dim_half = module.latent_dim // 2
+        
+        ctx.save_for_backward(x, prototypes, scale)
+        ctx.latent_dim_half = latent_dim_half
+        ctx.eps = eps
+        
+        with torch.no_grad():
+             d = torch.cdist(x[:, :latent_dim_half], 
+                             prototypes[:, :latent_dim_half], p=2)
+             sim_scores = 1.0 / (torch.square(d * scale) + 1.0)
+             
+        return sim_scores
+
+    @staticmethod
+    def backward(ctx, grad_output):
+        input_, prototypes, scale = ctx.saved_tensors
+        eps = ctx.eps
+        latent_dim_half = ctx.latent_dim_half
+
+        X = input_.clone().detach().requires_grad_(True)
+        relevance_output = grad_output.clone().detach()
+        
+        print('Init relevance: ', relevance_output.min().item(), relevance_output.max().item())
+
+        # with torch.enable_grad():
+        #     d = torch.cdist(X[:, :latent_dim_half], 
+        #                     prototypes[:, :latent_dim_half], p=2)
+        #     Z = 1.0 / (torch.square(d * scale) + 1.0)
+
+        # S = relevance_output / Z.clone().detach()
+        # Z.backward(S)
+        # grad_input = X.grad.data
+        # return torch.abs(R), None, None
+        
+        # mannual compute sim backward
+        # grad_input = 2*relevance_output * torch.abs(X[:, :latent_dim_half] - prototypes[:, :latent_dim_half]) / \
+        #               (torch.cdist(X[:, :latent_dim_half], prototypes[:, :latent_dim_half], p=2) + 1)**2
+        X_half = X[:, :latent_dim_half]
+        P_half = prototypes[:, :latent_dim_half]
+        diff = X_half.unsqueeze(1) - P_half.unsqueeze(0)
+
+        # derive of sim score w.r.t. input X
+        # d/dx = -1 * R_out * scale^2 * 2 / (denom^2)
+        dist_sq = torch.sum(diff ** 2, dim=2) 
+        denominator = 1.0 + (scale ** 2) * dist_sq
+        coeff = -2 * (scale ** 2) * relevance_output / (denominator ** 2)
+        # take abs to avoid flipping sign issue
+        # grads_per_proto = coeff.unsqueeze(2) * torch.abs(diff)
+        grads_per_proto = coeff.unsqueeze(2) * diff
+        
+        # collect gradients from all prototypes
+        # [Batch, Dim]
+        grad_input_half = torch.sum(grads_per_proto, dim=1)
+        # fill zeros for the rest dimensions
+        grad_input = torch.zeros_like(X)
+        grad_input[:, :latent_dim_half] = grad_input_half
+        
+        R = X.data * grad_input
+
+        print('sim_score rel backward: ', R.min().item(), R.max().item())
+        # print('sim_score rel backward: ', torch.abs(R).min().item(), torch.abs(R).max().item())
+        return R, None, None
+
+
 #######################################################
 #######################################################
 #######################################################
@@ -204,6 +301,7 @@ def gamma_fn(gamma):
 
 ## incrs
 add_epsilon_fn = lambda e: lambda x:   x + ((x > 0).float() * 2 - 1) * e
+
 
 
 #######################################################
@@ -244,10 +342,8 @@ class linearlayer_eps_wrapper_fct(torch.autograd.Function):
         module.weight = torch.nn.Parameter(weight)
 
         X = input_.clone().detach().requires_grad_(True)
-        relevance_output = grad_output.clone().detach()[0]
-
-        # keeps k% of the largest tensor elements
-        relevance_output = relevance_filter(relevance_output, top_k_percent = LRP_FILTER_TOP_K)
+        
+        relevance_output = grad_output.clone().detach()
 
         # Rule
         with torch.enable_grad():
@@ -296,10 +392,8 @@ class linearlayer_gamma_wrapper_fct(torch.autograd.Function):
         module.weight = torch.nn.Parameter(weight)
 
         X = input_.clone().detach().requires_grad_(True)
-        relevance_output = grad_output.clone().detach()[0]
-
-        # keeps k% of the largest tensor elements
-        relevance_output = relevance_filter(relevance_output, top_k_percent = LRP_FILTER_TOP_K)
+        
+        relevance_output = grad_output.clone().detach()
 
         # Rule
         with torch.enable_grad():
@@ -317,8 +411,8 @@ class linearlayer_gamma_wrapper_fct(torch.autograd.Function):
 # LRP-Alpha1Beta0 Rule == Z_plus rule
 class linearlayer_Alpha1Beta0_wrapper_fct(torch.autograd.Function):
     @staticmethod
-    def forward(ctx, x, module, ignorebias):
-        #stash module config params and trainable params
+    def forward(ctx, x, module, apply_filter):
+        # #stash module config params and trainable params
         propertynames, values = _configvalues_totensorlist(module)
 
         weight = module.weight.data.clone()
@@ -327,17 +421,17 @@ class linearlayer_Alpha1Beta0_wrapper_fct(torch.autograd.Function):
         else:
           bias = module.bias.data.clone()
 
-        ignorebiasTensor=torch.tensor([ignorebias], dtype = torch.bool, device = module.weight.device)
+        applyFilterTensor=torch.tensor([apply_filter], dtype = torch.bool, device = module.weight.device)
 
-        ctx.save_for_backward(x, weight, bias, ignorebiasTensor, *values)
+        ctx.save_for_backward(x, weight, bias, applyFilterTensor, *values)
         return module.forward(x)
 
     @staticmethod
     def backward(ctx, grad_output):
         # input_, weight, bias, epstensor, *values = ctx.saved_tensors
-        input_, weight, bias, ignorebiasTensor, *values = ctx.saved_tensors
+        input_, weight, bias, applyFilterTensor, *values = ctx.saved_tensors
         paramsdict = tensorlist_todict(values)
-        ignorebias = ignorebiasTensor.item()
+        apply_filter = applyFilterTensor.item()
         
         # set up module weights and bias
         if bias is None:
@@ -348,25 +442,55 @@ class linearlayer_Alpha1Beta0_wrapper_fct(torch.autograd.Function):
         module.weight = torch.nn.Parameter(weight)
 
         X = input_.clone().detach().requires_grad_(True)
-        relevance_output = grad_output.clone().detach()[0]
+        relevance_output = grad_output.clone().detach()
         
+        if apply_filter:
+          relevance_output = relevance_filter(relevance_output, top_k_percent = LRP_FILTER_TOP_K)
         # keeps k% of the largest tensor elements
-        relevance_output = relevance_filter(relevance_output, top_k_percent = LRP_FILTER_TOP_K)
+        # relevance_output = relevance_filter(relevance_output, top_k_percent = LRP_FILTER_TOP_K)
 
-        # Rule
-        pnlinear = posneglinear(module, ignorebias = ignorebias)
-        nplinear = negposlinear(module, ignorebias = ignorebias)
+        sel = weight > 0
+        zeros = torch.zeros_like(weight)
 
-        def _f(X, module, relevance_output):
-          with torch.enable_grad():
-            Z = module(X)
-          S = safe_divide(relevance_output, Z.clone().detach(), eps0 = EPS, eps = 0)
-          Z.backward(S)
-          R = X.data * X.grad.data
-          return R
+        weight_pos       = torch.where(sel,  weight, zeros)
+        weight_neg       = torch.where(~sel, weight, zeros)
 
-        R1 = _f(X, pnlinear, relevance_output)
-        R2 = _f(X, nplinear, relevance_output)
+        input_pos         = torch.where(X >  0, X, torch.zeros_like(X))
+        input_neg         = torch.where(X <= 0, X, torch.zeros_like(X))
+
+        def _f(X1, X2, W1, W2): 
+          Z1  = F.linear(X1, W1, bias=None) 
+          Z2  = F.linear(X2, W2, bias=None)
+          Z   = Z1 + Z2
+
+          rel_out = relevance_output / (Z + (Z==0).float()* EPS)
+          t1 = F.linear(rel_out, W1.t(), bias=None) 
+          t2 = F.linear(rel_out, W2.t(), bias=None)
+          r1  = t1 * X1
+          r2  = t2 * X2
+
+          return r1 + r2
+        
+        R1 = _f(input_pos, input_neg, weight_pos, weight_neg)
+        R2 = _f(input_neg, input_pos, weight_pos, weight_neg)
+
+        # # Rule
+        # pnlinear = posneglinear(module)
+        # nplinear = negposlinear(module)
+        # def _f(X, module, relevance_output):
+        #   with torch.enable_grad():
+        #     Z = module(X)
+        #     print("Z min/max: ", torch.min(Z), torch.max(Z))
+        #   # S = safe_divide(relevance_output, Z.clone().detach(), eps0 = EPS, eps = 0)
+        #   S = (relevance_output / (Z + EPS * (Z == 0).to(Z))).data
+        #   Z.backward(S)
+        #   R = X.data * X.grad.data
+        #   return R
+        # R1 = _f(X, pnlinear, relevance_output)
+        # print("Alpha: ", torch.min(R1), torch.max(R1))
+        # R2 = _f(X, nplinear, relevance_output)
+        # print("Beta: ", torch.min(R2), torch.max(R2))
+
         R = R1 * 1 - R2 * 0       # alpha=1, beta=0
 
         return R, None, None
@@ -403,14 +527,12 @@ class linearlayer_Alpha2Beta1_wrapper_fct(torch.autograd.Function):
         module.weight = torch.nn.Parameter(weight)
 
         X = input_.clone().detach().requires_grad_(True)
-        relevance_output = grad_output.clone().detach()[0]
-
-        # keeps k% of the largest tensor elements
-        relevance_output = relevance_filter(relevance_output, top_k_percent = LRP_FILTER_TOP_K)
+        relevance_output = grad_output.clone().detach()
+        relevance_output = relevance_filter(relevance_output, top_k_percent = LRP_FILTER_TOP_K, double_side = True)
 
         # Rule
-        pnlinear = posneglinear(module, ignorebias = ignorebias)
-        nplinear = negposlinear(module, ignorebias = ignorebias)
+        pnlinear = posneglinear(module)
+        nplinear = negposlinear(module)
 
         def _f(X, module, relevance_output):
           with torch.enable_grad():
@@ -428,28 +550,77 @@ class linearlayer_Alpha2Beta1_wrapper_fct(torch.autograd.Function):
 
 
 
-# LRP-|Z| Rule: https://link.springer.com/chapter/10.1007/978-3-030-20518-8_24#Sec3
-class linearlayer_absZ_wrapper_fct(torch.autograd.Function):
+# # LRP-|Z| Rule: https://link.springer.com/chapter/10.1007/978-3-030-20518-8_24#Sec3
+# class linearlayer_absZ_wrapper_fct(torch.autograd.Function):
+#     @staticmethod
+#     def forward(ctx, x, module, ignorebias):
+#         #stash module config params and trainable params
+#         propertynames, values = _configvalues_totensorlist(module)
+#         weight = module.weight.data.clone()
+#         if module.bias is None:
+#           bias = None
+#         else:
+#           bias = module.bias.data.clone()
+#         ignorebiasTensor = torch.tensor([ignorebias], dtype = torch.bool, device = module.weight.device)
+#         ctx.save_for_backward(x, weight, bias, ignorebiasTensor, *values)
+#         return module.forward(x)
+
+#     @staticmethod
+#     def backward(ctx, grad_output):
+#         # input_, weight, bias, epstensor, *values = ctx.saved_tensors
+#         input_, weight, bias, ignorebiasTensor, *values = ctx.saved_tensors
+#         paramsdict = tensorlist_todict(values)
+#         ignorebias = ignorebiasTensor.item()
+        
+#         # set up module weights and bias
+#         if bias is None:
+#           module = nn.Linear(**paramsdict, bias = False )
+#         else:
+#           module = nn.Linear(**paramsdict, bias = True )
+#           module.bias = torch.nn.Parameter(bias)
+#         module.weight = torch.nn.Parameter(weight)
+
+#         X = input_.clone().detach().requires_grad_(True)
+
+#         relevance_output = grad_output.clone().detach()
+
+#         # Rule
+#         pnlinear = posneglinear(module, ignorebias = ignorebias)
+#         nplinear = negposlinear(module, ignorebias = ignorebias)
+
+#         def _f(X, module, relevance_output):
+#           with torch.enable_grad():
+#             Z = module(X)
+#           S = safe_divide(relevance_output, Z.clone().detach(), eps0 = EPS, eps = 0)
+#           Z.backward(S)
+#           R = X.data * X.grad.data
+#           return R
+
+#         R1 = _f(X, pnlinear, relevance_output)
+#         R2 = _f(X, nplinear, relevance_output)
+#         R = R1 * 1 + R2 * 1         # alpha=1, beta=-1
+
+#         return R, None, None
+
+
+class linearlayer_abs_wrapper_fct(torch.autograd.Function):
     @staticmethod
-    def forward(ctx, x, module, ignorebias):
-        #stash module config params and trainable params
+    def forward(ctx, x, module):
         propertynames, values = _configvalues_totensorlist(module)
         weight = module.weight.data.clone()
         if module.bias is None:
-          bias = None
+            bias = None
         else:
-          bias = module.bias.data.clone()
-        ignorebiasTensor = torch.tensor([ignorebias], dtype = torch.bool, device = module.weight.device)
-        ctx.save_for_backward(x, weight, bias, ignorebiasTensor, *values)
+            bias = module.bias.data.clone()
+
+        ctx.save_for_backward(x, weight, bias, *values)
         return module.forward(x)
 
     @staticmethod
     def backward(ctx, grad_output):
-        # input_, weight, bias, epstensor, *values = ctx.saved_tensors
-        input_, weight, bias, ignorebiasTensor, *values = ctx.saved_tensors
+        input_, weight, bias, *values = ctx.saved_tensors
         paramsdict = tensorlist_todict(values)
-        ignorebias = ignorebiasTensor.item()
-        
+
         # set up module weights and bias
         if bias is None:
           module = nn.Linear(**paramsdict, bias = False )
@@ -457,37 +628,44 @@ class linearlayer_absZ_wrapper_fct(torch.autograd.Function):
           module = nn.Linear(**paramsdict, bias = True )
           module.bias = torch.nn.Parameter(bias)
         module.weight = torch.nn.Parameter(weight)
-
+        
         X = input_.clone().detach().requires_grad_(True)
-        relevance_output = grad_output.clone().detach()[0]
+        relevance_output = grad_output.clone().detach()
 
-        # keeps k% of the largest tensor elements
-        relevance_output = relevance_filter(relevance_output, top_k_percent = LRP_FILTER_TOP_K)
+        with torch.enable_grad():
+            Z = module(X) # h
+            
+            # absLRP: S = R_out / (|Z| + eps)
+            S = relevance_output / (Z.abs() + EPS)
 
-        # Rule
-        pnlinear = posneglinear(module, ignorebias = ignorebias)
-        nplinear = negposlinear(module, ignorebias = ignorebias)
-
-        def _f(X, module, relevance_output):
-          with torch.enable_grad():
-            Z = module(X)
-          S = safe_divide(relevance_output, Z.clone().detach(), eps0 = EPS, eps = 0)
-          Z.backward(S)
-          R = X.data * X.grad.data
-          return R
-
-        R1 = _f(X, pnlinear, relevance_output)
-        R2 = _f(X, nplinear, relevance_output)
-        R = R1 * 1 + R2 * 1         # alpha=1, beta=-1
+            # absLRP numerator virtual forward pass (Equation 12 Numerator)
+            # Goal is to compute gradient of (xi * wij)^+
+            
+            # ha = module_abs(input_abs) = |x| * |w|
+            W_abs = weight.abs()
+            B_abs = bias.abs() if bias is not None else None
+            Z_abs = F.linear(X.abs(), W_abs, B_abs) # ha
+            
+            # Z_pos: positive contribution part
+            Z_pos = (Z + Z_abs)
+            
+            grads = torch.autograd.grad(outputs=Z_pos, inputs=X, grad_outputs=S)[0]
+            R = X.data * grads.data
+            print('AbsLRP rel backward: ', R.min().item(), R.max().item())
 
         return R, None, None
 
 
+
+
+
+
+
 #######################################################
 #######################################################
 #######################################################
 
-def relevance_filter(r: torch.tensor, top_k_percent: float = 1.0) -> torch.tensor:
+def relevance_filter(r: torch.tensor, top_k_percent: float = 1.0, double_side=False) -> torch.tensor:
     """
     Adopted from: https://github.com/kaifishr/PyTorchRelevancePropagation
 
@@ -497,7 +675,6 @@ def relevance_filter(r: torch.tensor, top_k_percent: float = 1.0) -> torch.tenso
     Args:
         r: Tensor holding relevance scores of current layer.
         top_k_percent: Proportion of top k values that is passed on.
-
     Returns:
         Tensor of same shape as input tensor.
     """
@@ -507,11 +684,16 @@ def relevance_filter(r: torch.tensor, top_k_percent: float = 1.0) -> torch.tenso
       # size = r.size()
       num_elements = r.size(-1)
       k = max(1, int(top_k_percent * num_elements))
+      
+      r_filtered = torch.zeros_like(r)
       top_k = torch.topk(input = r, k = k, dim = -1)
-      r = torch.zeros_like(r)
-      r.scatter_(dim = 0, index = top_k.indices, src = top_k.values)
+      r_filtered.scatter_(dim = -1, index = top_k.indices, src = top_k.values)      
 
-    return r
+      if double_side:
+          bottom_k = torch.topk(r, k=k, dim=-1, largest=False)
+          r_filtered.scatter_(-1, bottom_k.indices, bottom_k.values)
+          
+    return r_filtered
 
 
 #######################################################
@@ -586,7 +768,7 @@ class posneglinear(nn.Module):
         clone = nn.Linear(**{attr: getattr(module, attr) for attr in ['in_features', 'out_features']})
         return clone.to(module.weight.device)
 
-    def __init__(self, linear, ignorebias):
+    def __init__(self, linear):
       super(posneglinear, self).__init__()
 
       self.poslinear = self._clone_module(linear)
@@ -595,13 +777,15 @@ class posneglinear(nn.Module):
       self.neglinear = self._clone_module(linear)
       self.neglinear.weight = torch.nn.Parameter(linear.weight.data.clone().clamp(max = 0)).to(linear.weight.device)
 
-      if ignorebias ==True:
-        self.poslinear.bias = None
-        self.neglinear.bias = None
-      else:
-          if linear.bias is not None:
-              self.poslinear.bias = torch.nn.Parameter(linear.bias.data.clone().clamp(min = 0) )
-              self.neglinear.bias = torch.nn.Parameter(linear.bias.data.clone().clamp(max = 0) )
+      self.poslinear.bias = None
+      self.neglinear.bias = None
+      # if ignorebias ==True:
+      #   self.poslinear.bias = None
+      #   self.neglinear.bias = None
+      # else:
+      #     if linear.bias is not None:
+      #         self.poslinear.bias = torch.nn.Parameter(linear.bias.data.clone().clamp(min = 0) )
+      #         self.neglinear.bias = torch.nn.Parameter(linear.bias.data.clone().clamp(max = 0) )
 
     def forward(self,x):
         vp1 = self.poslinear(torch.clamp(x, min = 0))
@@ -614,7 +798,7 @@ class negposlinear(nn.Module):
         clone = nn.Linear(**{attr: getattr(module, attr) for attr in ['in_features','out_features']})
         return clone.to(module.weight.device)
 
-    def __init__(self, linear, ignorebias):
+    def __init__(self, linear):
       super(negposlinear, self).__init__()
 
       self.poslinear = self._clone_module(linear)
@@ -622,14 +806,16 @@ class negposlinear(nn.Module):
 
       self.neglinear = self._clone_module(linear)
       self.neglinear.weight = torch.nn.Parameter(linear.weight.data.clone().clamp(max = 0)).to(linear.weight.device)
-
-      if ignorebias ==True:
-        self.poslinear.bias = None
-        self.neglinear.bias = None
-      else:
-          if linear.bias is not None:
-              self.poslinear.bias = torch.nn.Parameter(linear.bias.data.clone().clamp(min = 0) )
-              self.neglinear.bias = torch.nn.Parameter(linear.bias.data.clone().clamp(max = 0) )
+      
+      self.poslinear.bias = None
+      self.neglinear.bias = None
+      # if ignorebias ==True:
+      #   self.poslinear.bias = None
+      #   self.neglinear.bias = None
+      # else:
+      #     if linear.bias is not None:
+      #         self.poslinear.bias = torch.nn.Parameter(linear.bias.data.clone().clamp(min = 0) )
+      #         self.neglinear.bias = torch.nn.Parameter(linear.bias.data.clone().clamp(max = 0) )
 
     def forward(self,x):
         vp2 = self.poslinear(torch.clamp(x, max = 0)) #on negatives
@@ -647,8 +833,10 @@ class negposlinear(nn.Module):
 #######################################################
 #######################################################
 
+# def safe_divide(numerator, divisor, eps0, eps):
+#     return numerator / (divisor + eps0 * (divisor == 0).to(divisor) + eps * divisor.sign() )
 def safe_divide(numerator, divisor, eps0, eps):
-    return numerator / (divisor + eps0 * (divisor == 0).to(divisor) + eps * divisor.sign() )
+    return numerator / (divisor + eps0 * (divisor == 0).to(divisor))
 
 
 def lrp_backward(_input, layer, relevance_output, eps0, eps):

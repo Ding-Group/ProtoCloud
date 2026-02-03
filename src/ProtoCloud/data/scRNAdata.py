@@ -2,7 +2,7 @@ import json
 import os
 
 import torch
-from anndata import AnnData
+import anndata
 import scanpy as sc
 import numpy as np
 import pandas as pd
@@ -14,8 +14,7 @@ from torch.utils.data import Dataset, DataLoader, random_split, WeightedRandomSa
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelEncoder
 
-from .utils import *
-from ..utils import load_file, save_file
+from ..utils import *
 import ProtoCloud.glo as glo
 EPS = glo.get_value('EPS')
 
@@ -381,7 +380,7 @@ class scRNAData():
         # load model used gene_names
         try:
             print("load saved gene names from:", model_dir)
-            model_genes = info_loader('gene_names', model_dir)
+            model_genes = data_info_loader('gene_names', model_dir)
         except FileNotFoundError:
             fpath = self.data_dir + model_dataname + '.h5ad'
             print("load gene names from:", fpath)
@@ -416,7 +415,7 @@ class scRNAData():
 
         self.adata = new_adata
         self.gene_names = self.adata.var["gene_name"].values
-        self.cell_encoder = info_loader('cell_encoder', os.path.dirname(pretrain_model_pth))
+        self.cell_encoder = data_info_loader('cell_encoder', os.path.dirname(pretrain_model_pth))
 
 
     def use_pred_label(self, pretrain_model_pth, results_dir, exp_code,
@@ -437,16 +436,16 @@ class scRNAData():
         if prob_mask:
             prob_mask = predicted['certainty'] == "certain"
 
-        self.cell_encoder = info_loader('cell_encoder', os.path.dirname(pretrain_model_pth))
+        self.cell_encoder = data_info_loader('cell_encoder', os.path.dirname(pretrain_model_pth))
         self.celltypes = predicted['pred1'].values
-        # print(self.cell_encoder.classes_)
+        print(self.cell_encoder.classes_)
         print("Using predicted label from pretrained model")
         
         train_idx = np.where(prob_mask)[0]
         test_idx = np.where(~prob_mask)[0]
 
-        # print(len(train_idx), max(train_idx), train_idx)
-        # print(len(test_idx), max(test_idx), test_idx)
+        print(len(train_idx), max(train_idx), train_idx)
+        print(len(test_idx), max(test_idx), test_idx)
 
         return train_idx, test_idx 
 

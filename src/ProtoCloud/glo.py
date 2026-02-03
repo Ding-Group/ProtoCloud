@@ -1,7 +1,12 @@
 """
 Help setup global variables
 """
+
 _global_dict: dict[str, object] = {} 
+
+def reset():
+    """Optional: clear all stored globals."""
+    _global_dict.clear()
  
 def set_value(key, value):
     global _global_dict
@@ -11,5 +16,5 @@ def set_value(key, value):
 def get_value(key):
     try:
         return _global_dict[key]
-    except KeyError as err:
-        raise KeyError(f"Read {key} failed") from err
+    except KeyError:
+        raise KeyError('Read ' + key + ' Failed\r\n')

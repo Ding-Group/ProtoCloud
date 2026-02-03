@@ -1,0 +1,500 @@
+import os
+import numpy as np
+import pandas as pd
+import torch
+import pickle
+
+# # Set Global variables
+# import ProtoCloud.glo as glo
+# glo._init()
+# glo.set_value('EPS', 1e-16)
+# glo.set_value('LRP_FILTER_TOP_K', 0.1)
+
+# from src.utils import *
+# # from src.data import *
+# from src.scRNAdata import *
+# from src.train import *
+# from src.calibrator import *
+# from src.plot import *
+# from src.lrp import *
+# from src.model import protoCloud
+
+import ProtoCloud
+
+def main(args):
+    args_dict = vars(args)
+    
+    ### load dataset
+    data = ProtoCloud.data.scRNAData(**args_dict)
+
+    if args.pretrain_model_pth is not None:
+        print("Reformat data according to pretrained model")
+        # resize data to model input dim
+        data.gene_subset(args.pretrain_model_pth)
+        data.adata.write(args.results_dir + args.dataset_name + ".h5ad", compression='gzip')
+        ProtoCloud.utils.data_info_saver(data.gene_names, args.model_dir, 'gene_names')
+    
+
+    print('\nData: ', args.dataset_name)
+    train_idx, test_idx = data.get_split_idx(**args_dict)
+    print('Training set size: ', len(train_idx))
+    print('Test set size: ', len(test_idx))
+
+    (train_X, test_X, train_Y, test_Y) = data.split_data(train_idx, test_idx, **args_dict)
+    
+    if args.batch_size == 128: # default
+        args.batch_size = 1024 if len(train_idx) > 1e5 else 128
+    ProtoCloud.utils.data_info_saver(data.cell_encoder, args.model_dir, 'cell_encoder')
+    ProtoCloud.utils.data_info_saver(data.gene_names, args.model_dir, 'gene_names')
+
+    if len(test_idx) != 0:
+        test_X = torch.Tensor(test_X)
+        
+    args.model_validation = 0 if (len(test_idx) == 0 or test_Y is None or args.new_label) else args.model_validation
+    model_encoder = data.cell_encoder
+
+
+    # Setup model
+    #######################################################
+    if args.pretrain_model_pth is None:
+        # model settings based on data
+        args.input_dim = len(data.gene_names)
+        args.num_classes = len(np.unique(train_Y))
+        args.num_prototypes = args.num_classes * args.prototypes_per_class
+        print('Num genes: {0}'.format(args.input_dim))
+        print('Num classes: {0}'.format(args.num_classes))
+
+        # setup model
+        print('\nSetup model')
+        model_dict = {"raw_input": args.raw,
+                    "input_dim": args.input_dim,
+                    "latent_dim": args.latent_dim,
+                    "num_prototypes_per_class": args.prototypes_per_class,
+                    "num_classes": args.num_classes,
+                    "activation": args.activation,
+                    "use_bn": args.use_bn,
+                    "obs_dist": args.obs_dist,
+                    "nb_dispersion": args.nb_dispersion,
+                    "use_bias": args.use_bias,
+                    "use_dropout": args.use_dropout,
+                    "encoder_layer_sizes": args.encoder_layer_sizes,
+                    "decoder_layer_sizes": args.decoder_layer_sizes,
+                    # "n_batch": args.n_batch,
+                    }
+        print(model_dict)
+        model = ProtoCloud.protoCloud(**model_dict).to(device)
+        # print(model)
+        if args.cont_train or args.model_mode != "train":
+            print('\nLoading existing model')
+            ProtoCloud.model.load_model(args.model_dir + args.exp_code + '.pth', model)
+    
+    else:   # args.pretrain_model_pth not None
+        print('\nLoad existing model from: \n\t', args.pretrain_model_pth)
+        model_dict = ProtoCloud.utils.load_model_dict(os.path.dirname(args.pretrain_model_pth), device)
+        print("Loaded model parameters: \n\t", model_dict)
+
+        args.input_dim = model_dict["input_dim"]
+        args.num_classes = model_dict["num_classes"]
+        args.prototypes_per_class = model_dict["num_prototypes_per_class"]
+        args.num_prototypes = args.prototypes_per_class * args.num_classes
+        
+        model = ProtoCloud.protoCloud(**model_dict).to(device)
+        ProtoCloud.model.load_model(args.pretrain_model_pth, model)
+
+        # copy pretrained model label encoder
+        if args.cont_train:
+            model_encoder = ProtoCloud.utils.data_info_loader('cell_encoder', os.path.dirname(args.pretrain_model_pth))
+            ProtoCloud.utils.data_info_saver(model_encoder, args.model_dir, 'cell_encoder')
+    
+    print("Number of parameters: ", sum(p.numel() for p in model.parameters() if p.requires_grad))
+
+    
+
+    # Training
+    #######################################################
+    args_dict = vars(args)
+    if args.model_mode == "train":
+        print('\nEnter training')
+        if args.model_validation:
+            test_y = torch.LongTensor(data.cell_encoder.transform(test_Y))
+            result_trend = ProtoCloud.model.run_model(model, 
+                                    train_X, train_Y,
+                                    test_X = test_X, test_Y = test_y, 
+                                    **args_dict
+                                    )
+        
+        else:
+            result_trend = ProtoCloud.model.run_model(model, 
+                                    train_X, train_Y,
+                                    validate_model = False,
+                                    **args_dict,
+                                    )
+
+        # save model to model_dir
+        ProtoCloud.utils.save_model(model, args.model_dir, args.exp_code)
+        ProtoCloud.utils.save_model_dict(model_dict, args.model_dir)
+        ProtoCloud.utils.save_file(result_trend, args.results_dir, args.exp_code, '_trend.npy')
+        ProtoCloud.utils.save_file(ProtoCloud.model.get_prototypes(model), args.results_dir, args.exp_code, '_prototypes.npy')
+
+
+
+        # get training data class threshold
+        predicted = ProtoCloud.model.get_predictions(model, train_X)
+        if model.obs_dist == 'nb':
+            ll = ProtoCloud.model.get_log_likelihood(model, train_X, 
+                                                train_Y if model.nb_dispersion == "celltype_target" else None)
+            predicted['ll'] = ll
+        predicted = ProtoCloud.utils.process_prediction_file(predicted, model_encoder,
+                                            model_encoder.inverse_transform(train_Y))
+        
+        # use similarity score for calibrator training
+        calibrator = ProtoCloud.model.simCalibration()
+        calibrator.fit(similarity_score=predicted['sim_score'].values,
+                        true_labels=predicted['label'].values,
+                        pred_labels=predicted['pred1'].values)
+        calibrator.save(args.model_dir)
+
+        if args.cont_train:
+            pre_cls_threshold = ProtoCloud.utils.data_info_loader('cls_threshold', os.path.dirname(args.pretrain_model_pth))
+            cls_threshold = ProtoCloud.utils.get_cls_threshold(predicted, pre_cls_threshold)
+        else:
+            cls_threshold = ProtoCloud.utils.get_cls_threshold(predicted)
+        ProtoCloud.utils.data_info_saver(cls_threshold, args.model_dir, 'cls_threshold')
+        print('\tTraining information saved')
+    
+    else:
+        args.plot_trend = 0
+        
+
+
+    # Predictions
+    #######################################################
+    args_dict = vars(args)
+    if args.model_mode != 'plot' and args.test_ratio != 0:
+        # predicted = ProtoCloud.model.get_predictions(model, test_X, False if args.model_mode == 'apply' else True)
+        predicted = ProtoCloud.model.get_predictions(model, test_X, False)
+        if model.obs_dist == 'nb' and test_Y is not None:
+            try:
+                predicted['ll'] = ProtoCloud.model.get_log_likelihood(model, test_X, 
+                                        Y = predicted['idx1'] if args.nb_dispersion == "celltype_target" else None
+                                        )
+                print("Avg log-likelihood: ", np.mean(predicted['ll']))
+                ProtoCloud.viz.plot_cell_likelihoods(args, predicted['ll'])
+            except Exception as e:
+                print(e)
+
+        if args.pretrain_model_pth is not None:
+            model_encoder = ProtoCloud.utils.data_info_loader('cell_encoder', os.path.dirname(args.pretrain_model_pth))
+            cls_threshold = ProtoCloud.utils.data_info_loader('cls_threshold', os.path.dirname(args.pretrain_model_pth))
+        else:
+            model_encoder = ProtoCloud.utils.data_info_loader('cell_encoder', args.model_dir)
+        
+        if args.new_label: # used pred label, but save orig label as actual label
+            indices = ProtoCloud.utils.load_file(file_ending='_idx.csv', **args_dict)
+            test_idx = indices['test_idx'].dropna().values.astype(int) 
+            label = data.adata.obs["celltype"][test_idx].values if ("celltype" in data.adata.obs.columns) else None
+            print(label)
+        elif test_Y is None:
+            label = None
+        else:
+            label = test_Y
+        
+        predicted['idx'] = test_idx
+        predicted = pd.DataFrame(predicted)
+        ProtoCloud.utils.save_file(predicted, args.results_dir, args.exp_code, '_pred0.csv')
+        # transform labels, add prediction comment (certain/ambiguous)
+        predicted = ProtoCloud.utils.process_prediction_file(predicted, model_encoder, label, 
+                                            model_dir = os.path.dirname(args.pretrain_model_pth) if args.pretrain_model_pth is not None else args.model_dir)
+        
+        # apply similarity calibrator
+        loaded_calibrator = ProtoCloud.model.simCalibration.load(args.model_dir)
+        # gt = calibrator._create_ground_truth(predicted)
+        calibrated_certainty = loaded_calibrator.predict_proba(predicted['sim_score'].values, predicted['pred1'].values)
+        predicted['calibrated_certainty'] = calibrated_certainty
+        
+        if test_Y is not None:
+            loaded_calibrator.evaluate_calibration(predicted['sim_score'].values, label, predicted['pred1'].values)
+        
+        ProtoCloud.utils.save_file(predicted, args.results_dir, args.exp_code, '_pred.csv')
+        print("\nPredictions saved")
+
+
+        if args.save_file:
+            latent = ProtoCloud.model.get_latent(model, test_X)
+            ProtoCloud.utils.save_file(latent, args.results_dir, args.exp_code, '_latent.npy')
+            proto = ProtoCloud.model.get_prototypes(model)
+            ProtoCloud.utils.save_file(proto, args.results_dir, args.exp_code, '_prototypes.npy')
+
+
+
+    # Visualization
+    #######################################################
+    print('Visualizing results')
+    args_dict = vars(args)
+    plot_path = args.plot_dir + args.exp_code
+
+    predicted = ProtoCloud.utils.load_file(args.results_dir, args.exp_code, '_pred.csv')
+    orig = predicted['label']
+    pred = predicted['pred1']
+    same_label = all(x in np.unique(orig) for x in np.unique(pred))
+    # try:
+    if args.plot_trend:
+        ProtoCloud.viz.plot_epoch_trend(**args_dict)
+    if args.protocorr:
+        ProtoCloud.viz.plot_protocorr_heatmap(args, data)
+    
+    if args.cm and test_Y is not None:
+        ProtoCloud.viz.plot_confusion_matrix(args)
+    
+        ProtoCloud.viz.plot_prediction_summary(predicted, data.cell_encoder.classes_, 
+                                path = plot_path,
+                                plot_mis_pred = same_label,
+                                **args_dict)
+    
+    if args.umap or args.two_latent:
+        latent_embedding = ProtoCloud.utils.load_file(args.results_dir, args.exp_code, '_latent.npy')
+        # latent_embedding = get_latent(model, data.to_dense(data.adata, raw=True))
+        proto_embedding = ProtoCloud.utils.load_file(args.results_dir, args.exp_code, '_prototypes.npy')
+    if args.umap:
+        ProtoCloud.viz.plot_latent_embedding(latent_embedding[:, :args.latent_dim//2], 
+                            proto_embedding[:, :args.latent_dim//2], 
+                            pred = pred, orig = orig, 
+                            proto_label = data.cell_encoder.classes_,
+                            adata = data.adata[test_idx] if "batch" in data.adata.obs.columns else None,
+                            path = plot_path,
+                            **args_dict)
+        # plot_umap_embedding(args, data)
+    
+    if args.distance_dist:
+        ProtoCloud.viz.plot_distance_to_prototypes(args, data)
+    
+    ProtoCloud.viz.plot_gene_expression(data.adata, data.cell_encoder.classes_, data.gene_names, **args_dict)
+    
+    # except Exception as e:
+    #     print("Error plotting:", e)
+
+
+    #######################################################
+    # LRP based explanations & marker gene selection
+    # if args.prp or args.lrp:
+    if args.prp:
+
+        print("\nGenerating model explanations")
+        print(ProtoCloud.prp.rule_map)
+        model_wrapped = ProtoCloud.protoCloud(**model_dict).to(device)
+        ProtoCloud.prp.convert_protocloud_to_lrp(model_wrapped, model, 
+                                                ProtoCloud.prp.lrp_params_def1, ProtoCloud.prp.rule_map)
+
+        # use a smaller subset of training data for explanation generation
+        k_samples_per_class = 1000
+        new_X_list = []
+        new_Y_list = []
+        for class_id in range(args.num_classes):
+            class_indices = np.where(train_Y == class_id)[0]
+            if sum(class_indices) == 0:
+                print(f"Error: {data.cell_encoder.inverse_transform([class_id])} have no training samples")
+                continue
+            selected_indices = class_indices[:k_samples_per_class]
+            new_X_list.append(train_X[selected_indices])
+            new_Y_list.append(train_Y[selected_indices])
+        train_X = np.concatenate(new_X_list, axis=0)
+        train_Y = np.concatenate(new_Y_list, axis=0)
+
+
+        if args.prp:
+            checkpoint = ProtoCloud.prp.generate_PRP_explanations(model_wrapped, 
+                                train_X, train_Y, 
+                                data,
+                                model.epsilon, 
+                                **args_dict,
+                                )
+            np.save(args.model_dir + "prototype_checkpoint.npy", checkpoint)
+
+
+        # if args.lrp:
+        #     try:
+        #         generate_LRP_explanations(model,              # model_wrapped
+        #                       train_X, train_Y, 
+        #                       data,
+        #                       model.epsilon, 
+        #                       **args_dict,)
+        #     except Exception as e:
+        #         print(f"Error in generate LRP: {e}")
+
+    if args.plot_prp:
+        print("Ploting PRP visulization")
+        ProtoCloud.viz.plot_prp_dist(data.cell_encoder.classes_, data.gene_names, **args_dict)
+        ProtoCloud.viz.plot_marker_venn_diagram(data.adata, **args_dict)
+        ProtoCloud.viz.plot_top_gene_PRP_dotplot(data.cell_encoder.classes_, data.gene_names, 
+                                num_protos = 1, top_num_genes = 10, 
+                                celltype_specific = False, save_markers = False, **args_dict)
+        ProtoCloud.viz.plot_gene_relevance(data.cell_encoder.classes_, data.gene_names, **args_dict)
+        ProtoCloud.viz.plot_gene_rel_VS_expr(data.adata, data.cell_encoder.classes_, data.gene_names, **args_dict)
+    
+        
+    # if args.plot_lrp:
+    #     print("Ploting LRP visulization")
+    #     plot_lrp_dist(data.cell_encoder.classes_, data.gene_names, **args_dict)
+    #     plot_all_class_lrp_dist(data.cell_encoder.classes_, data.gene_names, **args_dict)
+        
+
+
+    
+    print("Finished!")
+        
+
+
+
+
+import argparse
+
+parser = argparse.ArgumentParser(description = 'ProtoCloud')
+#######################################################
+### ----Path Parameters----
+parser.add_argument('--data_dir',       type = str, default = './data/')
+parser.add_argument('--model_dir',      type = str, default = './saved_models/')
+parser.add_argument('--results_dir',    type = str, default = './results/')
+### ----Data Parameters----
+parser.add_argument('--dataset_name', type = str, help= 'load <data_dir>/<dataset_name>.h5ad')
+parser.add_argument('--raw',        type = int, default = 1, choices = [0, 1], help = 'use raw data or normalized data')
+parser.add_argument('--preprocess_data',     type = int, default = 0, choices = [0, 1], help = 'preprocess data or not')
+parser.add_argument('--filter_gene_by_counts', type = int, default = 500, help = 'minimum counts for genes')
+parser.add_argument('--filter_cell_by_counts', type = int, default = 1000, help = 'minimum counts for cells')
+parser.add_argument('--normalize_total', type = float, default = 1e4, help = 'total counts for normalization')
+parser.add_argument('--log1p',     type = int, default = 1, choices = [0, 1], help = 'log1p normalization or not')
+parser.add_argument('--topngene',   type = int, help = 'number of genes to select')
+parser.add_argument('--batch_size', type = int, default=128)
+parser.add_argument('--test_ratio', type = float, default = 0.1)
+parser.add_argument('--data_balance', type = int, default = 1, choices = [0, 1], help = 'use weighted sampling for training data or not')
+parser.add_argument('--new_label',  type = int, default = 0, choices = [0, 1], help = 'use previous predicted label as target or not')
+parser.add_argument('--split',      type = str, default = None, help = "cluster name of test data. if None, use test_ratio")
+parser.add_argument('--index_file',  type = str, default = None, help = 'Full path of split indices with columns train_idx and test_idx to load')
+#######################################################
+### ----Model Parameters----
+parser.add_argument('--model_name',       type = str, default = 'protoCloud')
+parser.add_argument('--model_mode',  type = str, default = "test", choices = ["train", "test", "apply", "plot"],
+                    help = "train model; test: z_mu for pred; apply: all data with reparametrization; plot: load and plot result files using test data")
+parser.add_argument('--cont_train',  type = int, default = 0, help = 'Load existing model and continue training')
+parser.add_argument('--model_validation',  type = int, default = 1, choices = [0, 1], help = 'validation accuracy in training stage')
+parser.add_argument('--pretrain_model_pth',  type = str, help = 'Full path of pre-trained model to load')
+parser.add_argument("--encoder_layer_sizes", nargs='+', type=int, help="List of values")
+parser.add_argument("--decoder_layer_sizes", nargs='+', type=int, help="List of values")
+parser.add_argument('--prototypes_per_class',   type = int, default = 6)
+parser.add_argument('--latent_dim',             type = int, default = 20)
+# Loss Function Parameters
+parser.add_argument('--obs_dist',       type = str, default = 'nb', choices = ['nb', 'normal'])
+parser.add_argument('--nb_dispersion',  type = str, default = 'celltype_target', choices = ['celltype_target', 'celltype_pred', 'gene'])
+# Optimizer Parameters + Survival Loss Function
+parser.add_argument('--two_step',    type = int, default = 1, choices = [0, 1], help = 'use two-step training or not')
+parser.add_argument('--early_stopping', type = int, default = 0, choices = [0, 1], help = 'use early stopping training or not')
+parser.add_argument('--recon_coef',  type = float, default = 10, help = 'reconstruction loss coefficient')
+parser.add_argument('--kl_coef',  type = float, default = 2, help = 'KL divergence loss coefficient')
+parser.add_argument('--ortho_coef',  type = float, default = 0.3, help = 'orthogonality loss coefficient')
+parser.add_argument('--atomic_coef',  type = float, default = 1, help = 'atomic loss coefficient')
+parser.add_argument('--activation',  type = str, default = 'relu', choices = ['relu'])
+parser.add_argument('--use_bias',      type = int, default = 0, choices = [0, 1])
+parser.add_argument('--use_dropout',      type = float, default = 0.0)
+parser.add_argument('--use_bn',      type = int, default = 1, choices = [0, 1], help = 'use batch normalization or not')
+parser.add_argument('--optimizer',   type = str, default = 'AdamW', choices = ['Adam', 'AdamW'])
+parser.add_argument('--lr',          type = float, default = 1e-3)
+parser.add_argument('--epochs',      type = int, default = 100)
+parser.add_argument('--target_accu', type = float, default = 0.7, help = 'mininum target accuracy to save model')
+parser.add_argument('--seed',        type = int, default = 7)
+#######################################################
+### Result plotting Parameters
+parser.add_argument('--save_file',  type = int, default = 1, choices = [0, 1], help = 'Save all files')
+parser.add_argument('--visual_result',  type = int, default = 1, choices = [0, 1], help = 'Generate all visual results')
+parser.add_argument('--plot_trend',     type = int, default = 0, choices = [0, 1], help = 'plot training trend vs epoch')
+parser.add_argument('--cm',             type = int, default = 0, choices = [0, 1], help = 'plot confusion matrix')
+parser.add_argument('--umap',           type = int, default = 0, choices = [0, 1], help = 'plot umap')
+parser.add_argument('--two_latent',        type = int, default = 0, choices = [0, 1], help = 'plot misclassified points umap')
+parser.add_argument('--protocorr',      type = int, default = 0, choices = [0, 1], help = 'plot prototype correlation')
+parser.add_argument('--distance_dist',       type = int, default = 0, choices = [0, 1], help = 'plot latent distance distribution to prototypes')
+
+parser.add_argument('--prp',            type = int, default = 1, choices = [0, 1], help = 'generate all PRP based explanations')
+parser.add_argument('--plot_prp',       type = int, default = 0, choices = [0, 1], help = 'plot all PRP explanation plots')
+# parser.add_argument('--lrp',            type = int, default = 1, choices = [0, 1], help = 'generate LRP based explanations')
+# parser.add_argument('--plot_lrp',       type = int, default = 0, choices = [0, 1], help = 'plot LRP explanation plots')
+
+
+args = parser.parse_args()
+
+
+# set device
+device = 'cuda' if torch.cuda.is_available() else 'cpu'
+num_workers = 4 if torch.cuda.is_available() else 0
+
+# set random seed
+ProtoCloud.utils.seed_torch(torch.device(device), args.seed)
+
+### Creates Experiment Code from argparse + Folder Name to Save Results
+if args.pretrain_model_pth is not None and not args.cont_train:
+    model_exp_code = os.path.basename(args.pretrain_model_pth)[:-4]
+    args.exp_code = "_".join(model_exp_code.split("_")[:4] + [args.dataset_name])
+else:
+    args.exp_code = ProtoCloud.utils.get_custom_exp_code(**vars(args))
+print("Experiment Name:", args.exp_code)
+
+
+# data directory
+ProtoCloud.utils.makedir(args.data_dir)
+
+# save model directory
+model_dir = args.model_dir + args.dataset_name + '/'
+args.model_dir = model_dir
+ProtoCloud.utils.makedir(args.model_dir)
+
+# results directory
+args.results_dir = args.results_dir + args.dataset_name + '/'
+ProtoCloud.utils.makedir(args.results_dir)
+args.plot_dir = args.results_dir + 'plots/'
+ProtoCloud.utils.makedir(args.plot_dir)
+args.anno_dir = args.results_dir + 'mis_anno/'
+ProtoCloud.utils.makedir(args.anno_dir)
+
+
+if args.cont_train:
+    args.two_step = 0
+
+if args.test_ratio == 0:
+    args.visual_result = 0
+    # args.lrp = 0
+
+if args.visual_result:
+    args.plot_trend = 1
+    args.cm = 1
+    args.umap = 1
+    args.two_latent = 1
+    args.protocorr = 1
+    args.distance_dist = 1
+
+if args.model_mode in ["apply"]:
+    args.test_ratio = 1
+    args.plot_trend = 0
+    args.protocorr = 0
+    args.prp = 0
+    # args.lrp = 0 if args.pretrain_model_pth is not None else args.lrp
+        
+
+args.prp_path = args.results_dir + 'prp/'
+if args.prp:
+    ProtoCloud.utils.makedir(args.prp_path)
+    args.plot_prp = 1
+
+# args.lrp_path = args.results_dir + 'lrp/'
+# if args.lrp:
+#     ProtoCloud.utils.makedir(args.lrp_path)
+#     args.plot_lrp = 1
+
+
+print('------args---------')
+print(args)
+with open(args.results_dir + 'args.pkl', 'wb') as f:
+    pickle.dump(args, f)
+print("\nArgs dict saved")
+
+
+if __name__ == '__main__':
+    main(args)
+    print("end script\n\n\n\n\n\n")
+    exit(0)
