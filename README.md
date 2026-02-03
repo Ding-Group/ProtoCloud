@@ -5,7 +5,6 @@ The official PyTorch implementation of "ProtoVAE: A Trustworthy Self-Explainable
 The code is built upon ProtoPNet's official implementation (https://github.com/cfchen-duke/ProtoPNet) and LRP implementation from https://github.com/AlexBinder/LRP_Pytorch_Resnets_Densenet.
 
 ## Update
-result1: from updated model with 2-step training
 
 <!-- ### Setup
 
