@@ -25,7 +25,10 @@ ProtoCloud can be used in **two different ways: via terminal call or package ins
 ### 1. Command-line interface (quick start) 
 
 
-Run the model straight from the terminal after cloning the repository. Datasets must be stored in the `data/` directory as `<dataset>.h5ad` files, annotated with a `celltype` column in `adata.obs` and a `gene_name` column in `adata.var`.
+Run the model straight from the terminal after cloning the repository. 
+Datasets must be stored in the `data/` directory as `<dataset>.h5ad` files (`AnnData` objects), annotated with a `celltype` column in `adata.obs` and a `gene_name` column in `adata.var`.
+
+If raw count data are used as input, the counts can be stored in `adata.layers['counts']` or directly in `adata.X`.
 
 ```bash
 python src/ProtoCloud/main.py --dataset_name <dataset> --model_mode train
@@ -172,3 +175,4 @@ The code is built upon protoVAE (https://github.com/SrishtiGautam/ProtoVAE) and 
 This project is licensed under the MIT License - see the LICENSE file for details.
 
 For detailed information about each parameter and its impact on the ProtoCloud model, please refer to the code documentation and relevant literature.
+
