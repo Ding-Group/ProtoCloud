@@ -390,6 +390,7 @@ parser.add_argument('--early_stopping', type = int, default = 0, choices = [0, 1
 parser.add_argument('--recon_coef',  type = float, default = 10, help = 'reconstruction loss coefficient')
 parser.add_argument('--kl_coef',  type = float, default = 2, help = 'KL divergence loss coefficient')
 parser.add_argument('--ortho_coef',  type = float, default = 0.3, help = 'orthogonality loss coefficient')
+parser.add_argument('--stage1_ortho_coef',  type = float, default = 0.0, help = 'orthogonality loss coefficient for stage 1 in two-step training (default: 0)')
 parser.add_argument('--atomic_coef',  type = float, default = 1, help = 'atomic loss coefficient')
 parser.add_argument('--activation',  type = str, default = 'relu', choices = ['relu'])
 parser.add_argument('--use_bias',      type = int, default = 0, choices = [0, 1])

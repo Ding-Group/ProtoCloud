@@ -24,6 +24,7 @@ def run_model(model,
             recon_coef = 10, 
             kl_coef = 2,
             ortho_coef = 0.3,
+            stage1_ortho_coef = 0.0,
             atomic_coef= 1,
             validate_model = True, test_X = None, test_Y = None,
             model_dir = None, results_dir = None,
@@ -62,7 +63,7 @@ def run_model(model,
 
     coefs = {'crs_ent': 1, 'recon': recon_coef, 
             'kl': 2 if two_step_training else kl_coef,
-            'ortho': 0 if two_step_training else ortho_coef,
+            'ortho': stage1_ortho_coef if two_step_training else ortho_coef,
             'atomic': 0.0 if two_step_training else atomic_coef,
             }
     print('loss coef:', coefs)
