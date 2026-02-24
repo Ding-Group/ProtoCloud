@@ -77,13 +77,13 @@ class protoCloud(nn.Module):
         self.nb_dispersion = nb_dispersion
         self.epsilon = EPS
         # self.n_batch = n_batch
-        
 
         # prototype-class labeled matrix
         self.num_prototypes = self.num_prototypes_per_class * self.num_classes
-        self.prototype_class_identity = torch.zeros(self.num_prototypes, self.num_classes)
+        identity = torch.zeros(self.num_prototypes, self.num_classes)
         for j in range(self.num_prototypes):
-            self.prototype_class_identity[j, j // self.num_prototypes_per_class] = 1
+            identity[j, j // self.num_prototypes_per_class] = 1
+        self.register_buffer('prototype_class_identity', identity) # register buffer to move to GPU automatically
 
         # prototype vectors
         prototype_shape = (self.num_prototypes, self.latent_dim)
@@ -193,8 +193,7 @@ class protoCloud(nn.Module):
             max_index = torch.multinomial(softmax_pred, 1)
             recon_loss, _ = self.recon_loss(x, max_index, px_mu, px_theta)
 
-
-        prototypes_of_correct_class = torch.t(self.prototype_class_identity[:, target]).to(device) 
+        prototypes_of_correct_class = self.prototype_class_identity[:, target].t()
         index_prototypes_of_correct_class = (prototypes_of_correct_class == 1).nonzero(as_tuple = True)[1]
         # class-corresponding prototypes' index for each sample in the batch
         index_prototypes_of_correct_class = index_prototypes_of_correct_class.view(x.shape[0], 
