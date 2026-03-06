@@ -1,5 +1,6 @@
 # ProtoCloud
 [![DOI](https://zenodo.org/badge/678277836.svg)](https://doi.org/10.5281/zenodo.18882740)
+
 ProtoCloud is a prototype-based interpretable deep learning model for single-cell RNA sequence analysis. It combines variational autoencoder (VAE) architecture with prototype learning to provide both cell type classification and interpretable features.
 
 ## Installation
@@ -175,5 +176,6 @@ The code is built upon protoVAE (https://github.com/SrishtiGautam/ProtoVAE) and 
 This project is licensed under the MIT License - see the LICENSE file for details.
 
 For detailed information about each parameter and its impact on the ProtoCloud model, please refer to the code documentation and relevant literature.
+
 
 
