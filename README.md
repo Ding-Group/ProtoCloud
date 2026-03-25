@@ -1,5 +1,6 @@
 # ProtoCloud
 [![DOI](https://zenodo.org/badge/678277836.svg)](https://doi.org/10.5281/zenodo.18882740)
+[![bioRxiv](https://img.shields.io/badge/bioRxiv-2026.02.06.704364-b31b1b)](https://www.biorxiv.org/content/10.64898/2026.02.06.704364v1)
 
 ProtoCloud is a prototype-based interpretable deep learning model for single-cell RNA sequence analysis. It combines variational autoencoder (VAE) architecture with prototype learning to provide both cell type classification and interpretable features.
 
