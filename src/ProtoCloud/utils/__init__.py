@@ -13,7 +13,6 @@ from ProtoCloud.utils.utils import (EPS, all_to_coo, calculate_batch_entropy,
                                     one_hot_encoder, print_results,
                                     process_prediction_file, rank_HRG,
                                     save_file, save_model, save_model_dict,
-                                    save_model_w_condition,
                                     save_prototype_cells, seed_torch,)
 
 __all__ = ['EPS', 'all_to_coo', 'calculate_batch_entropy', 'compute_threshold',
@@ -24,5 +23,5 @@ __all__ = ['EPS', 'all_to_coo', 'calculate_batch_entropy', 'compute_threshold',
            'log_likelihood_normal', 'makedir', 'minmax_scale_matrix',
            'model_metrics', 'mutual_genes', 'one_hot_encoder', 'print_results',
            'process_prediction_file', 'rank_HRG', 'save_file', 'save_model',
-           'save_model_dict', 'save_model_w_condition', 'save_prototype_cells',
+           'save_model_dict', 'save_prototype_cells',
            'seed_torch', 'utils']

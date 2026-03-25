@@ -31,23 +31,53 @@ EPS = glo.get_value('EPS')
 
 
 class scRNAData():
+    """Handler for loading, preprocessing, and splitting single-cell RNA-seq data.
+
+    Manages the full data pipeline from raw .h5ad files to train/test splits
+    ready for model training. Supports species-specific gene filtering,
+    highly variable gene selection, data balancing via rare cell type
+    augmentation, and integration with pretrained model gene spaces.
+
+    Parameters
+    ----------
+    dataset_name : str
+        Name of the dataset. Used to locate .h5ad files in ``data_dir``.
+    data_dir : str
+        Directory path containing the .h5ad data files.
+    raw : bool
+        Whether to use raw counts (``'counts'`` layer) as input.
+    topngene : int or None
+        Number of top highly variable genes to select. If None, all genes
+        are kept.
+    preprocess_data : bool, optional
+        Whether to preprocess external datasets (filtering, normalization,
+        log-transform), by default False.
+    species : {'human', 'mouse'}, optional
+        Species type for gene filtering, by default 'human'.
+    filter_gene_by_counts : int, optional
+        Minimum counts threshold for gene filtering, by default 500.
+    filter_cell_by_counts : int, optional
+        Minimum counts threshold for cell filtering, by default 1000.
+    normalize_total : float, optional
+        Target sum for library size normalization, by default 1e4.
+    log1p : bool, optional
+        Whether to apply log1p transformation, by default True.
+
+    Attributes
+    ----------
+    adata : anndata.AnnData
+        The loaded and processed single-cell data object.
+    gene_names : numpy.ndarray
+        Array of gene names from ``adata.var['gene_name']``.
+    celltypes : numpy.ndarray or None
+        Cell type annotations from ``adata.obs['celltype']``, or None if
+        not available.
+    cell_encoder : sklearn.preprocessing.LabelEncoder or None
+        Fitted label encoder for cell type labels. Initialized during
+        ``split_data`` or loaded from a pretrained model.
+        
     """
-    scRNA-seq dataset class for loading and processing single-cell RNA-seq data.
-    Methods:
-        to_dense(adata, raw=True): Convert sparse AnnData object to dense format.
-        to_sparse_tensor(adata, raw=True): Convert AnnData object to sparse tensor format.
-        get_split_idx(new_label, test_ratio, results_dir, exp_code, index_file=None, pretrain_model_pth=None, **kwargs): Get split index for training and test sets.
-        split_data(train_idx, test_idx, data_balance=True, model_mode="train", **kwargs): Split data into train and test sets.
-        augment_rares(X, Y): Augment rare cell types in the dataset.
-        assign_dataloader(X, Y, batch_size, batch=None): Assign dataloader for the dataset.
-        _label_encoder(labels): Generate numerical labels using label encoder.
-        _preprocess(adata, filter_gene_by_counts=False, filter_cell_by_counts=False, normalize_total=1e4, log1p=True): Preprocess the dataset.
-        _top_n_genes(topngene, adata, raw=True): Select top n genes from the dataset.
-        _remove_by_species(adata): Remove highly expressed genes based on species.
-        gene_subset(pretrain_model_pth, **kwargs): Load pretrained model genes and resize the data.
-        use_pred_label(pretrain_model_pth, results_dir, exp_code, test_ratio, prob_mask=True, **kwargs): Use predicted label with high certainty as train set and rest as test set.    
-    """
-    def __init__(self, dataset_name, data_dir, raw:bool, topngene, 
+    def __init__(self, dataset_name, data_dir, raw:bool=1, topngene=None, 
                 preprocess_data = False, species='human',
                 filter_gene_by_counts=500, filter_cell_by_counts=1000, normalize_total=1e4, log1p=True, 
                 **kwargs):
@@ -122,6 +152,22 @@ class scRNAData():
 
     @staticmethod
     def to_dense(adata, raw=True):
+        """Convert AnnData expression matrix to a dense numpy array.
+
+        Parameters
+        ----------
+        adata : anndata.AnnData
+            The AnnData object containing gene expression data.
+        raw : bool, optional
+            If True and a ``'counts'`` layer exists, use raw counts;
+            otherwise use ``adata.X``, by default True.
+
+        Returns
+        -------
+        numpy.ndarray
+            Dense gene expression matrix of shape ``(n_cells, n_genes)``
+            with dtype int32.
+        """
         if raw and 'counts' in adata.layers:
             print("\tUsing layer 'counts' as input")
             X = np.array(adata.layers['counts'].todense(), dtype=np.int32) \
@@ -136,6 +182,21 @@ class scRNAData():
 
     @staticmethod
     def to_sparse_tensor(adata, raw=True):
+        """Convert AnnData expression matrix to COO sparse format.
+
+        Parameters
+        ----------
+        adata : anndata.AnnData
+            The AnnData object containing gene expression data.
+        raw : bool, optional
+            If True and a ``'counts'`` layer exists, use raw counts;
+            otherwise use ``adata.X``, by default True.
+
+        Returns
+        -------
+        scipy.sparse.coo_matrix
+            Gene expression data in COO sparse format.
+        """
         if raw and 'counts' in adata.layers:
             print("\tUsing layer 'counts' as input")
             X = adata.layers['counts']
@@ -146,9 +207,42 @@ class scRNAData():
         return X
     
 
-    def get_split_idx(self, new_label, test_ratio, 
-                      results_dir, exp_code, index_file = None, pretrain_model_pth = None, **kwargs):
-        """get split index for training set and test set"""
+    def get_split_idx(self, test_ratio, new_label = False, 
+                      results_dir = None, exp_code = None, index_file = None, pretrain_model_pth = None, **kwargs):
+        """Get train/test split indices.
+
+        Supports three modes: loading from an existing index file, using
+        predicted labels from a pretrained model, or random splitting.
+        The resulting indices are saved to a CSV file in `result_dir`.
+
+        Parameters
+        ----------
+        new_label : bool
+            If True, use predicted labels from a pretrained model to
+            determine the split (high-certainty as train, rest as test).
+        test_ratio : float
+            Fraction of data to use as test set (0.0 to 1.0).
+        results_dir : str
+            Directory to save the split index file.
+        exp_code : str
+            Experiment code used for file naming.
+        index_file : str, optional
+            Path to an existing index file to load splits from,
+            by default None.
+        pretrain_model_pth : str, optional
+            Path to a pretrained model checkpoint, required when
+            ``new_label=True``, by default None.
+
+
+        Returns
+        -------
+        train_idx : numpy.ndarray
+            Integer indices for training samples.
+        test_idx : numpy.ndarray
+            Integer indices for test samples.
+        """
+        if exp_code is None:
+            exp_code = 'protocloud'
         if test_ratio == 1:
             # all data for test
             return np.array([], dtype=int), np.arange(self.adata.shape[0])
@@ -158,6 +252,8 @@ class scRNAData():
             indices = load_file(results_dir, path=index_file, **kwargs)
             train_idx = indices['train_idx'].dropna().values.astype(int)
             test_idx = indices['test_idx'].dropna().values.astype(int) 
+
+            return train_idx, test_idx
         
         elif new_label:
             train_idx, test_idx = self.use_pred_label(pretrain_model_pth, results_dir, 
@@ -174,7 +270,8 @@ class scRNAData():
         s1 = pd.Series(train_idx, name = 'train_idx')
         s2 = pd.Series(test_idx, name = 'test_idx')
         df = pd.concat([s1, s2], axis = 1)
-        save_file(df, results_dir, exp_code, '_idx.csv')
+        if results_dir is not None and exp_code is not None:
+            save_file(df, results_dir, exp_code, '_idx.csv')
 
         return train_idx, test_idx
 
@@ -182,7 +279,35 @@ class scRNAData():
     def split_data(self, train_idx, test_idx, 
                    data_balance = True, 
                    model_mode = "train", **kwargs):
-        """split data into train and test"""
+        """Split data into training and test sets.
+
+        Converts expression data to dense format, encodes training labels
+        with ``LabelEncoder``, and augments rare cell types.
+
+        Parameters
+        ----------
+        train_idx : array-like
+            Indices of training samples.
+        test_idx : array-like
+            Indices of test samples.
+        data_balance : bool, optional
+            Whether to augment rare cell types in training data,
+            by default True.
+        model_mode : {'train', 'test'}, optional
+            Model mode; balancing is only applied when ``'train'``,
+            by default ``'train'``.
+
+        Returns
+        -------
+        train_X : numpy.ndarray
+            Training expression matrix of shape ``(n_train, n_genes)``.
+        test_X : numpy.ndarray
+            Test expression matrix of shape ``(n_test, n_genes)``.
+        train_Y : numpy.ndarray
+            Encoded numeric training labels (0-indexed).
+        test_Y : numpy.ndarray
+            Original string cell type labels for the test set.
+        """
         X = self.to_dense(self.adata, raw=self.raw)
         # X = self.to_sparse_tensor(self.adata, raw=self.raw)
 
@@ -206,15 +331,34 @@ class scRNAData():
 
         if data_balance and model_mode == "train":
             train_X, train_Y = self.augment_rares(train_X, train_Y)
-        for c in np.unique(train_Y):
-            portion = np.sum(train_Y == c) / train_Y.shape[0]
-            print(self.cell_encoder.inverse_transform([c]), "%.3f"%portion)
+        # for c in np.unique(train_Y):
+        #     portion = np.sum(train_Y == c) / train_Y.shape[0]
+        #     print(self.cell_encoder.inverse_transform([c]), "%.3f"%portion)
 
         return (train_X, test_X, train_Y, test_Y)
 
 
     @staticmethod
     def augment_rares(X, Y):
+        """Oversample rare cell types via multinomial sampling.
+
+        Cell types with fewer cells than ``1 / (2 * num_of_celltypes)`` of the
+        total are considered rare. 
+
+        Parameters
+        ----------
+        X : numpy.ndarray
+            Gene expression matrix of shape ``(n_cells, n_genes)``.
+        Y : numpy.ndarray
+            Numeric cell type labels of shape ``(n_cells,)``.
+
+        Returns
+        -------
+        augmented_X : numpy.ndarray
+            Expression matrix with synthetic samples appended.
+        augmented_Y : numpy.ndarray
+            Labels including synthetic samples.
+        """
         print("\tAugmenting rare cell types")
         min_p = 1 / len(np.unique(Y)) / 2
         min_type_num = int(min_p * X.shape[0])
@@ -227,6 +371,8 @@ class scRNAData():
                 num_sample += min_type_num - num_cells
                 rares.append(c)
         print("Rare cell types:", len(rares))
+        print("\tRare cell types:", [self.cell_encoder.inverse_transform([c])[0] for c in rares])
+        print(f"\tTotal samples to add: {num_sample}")
         new_X = torch.zeros((X.shape[0] + num_sample, X.shape[1]))
         new_Y = torch.zeros(Y.shape[0] + num_sample, dtype=int)
         new_X[:X.shape[0]] = torch.from_numpy(X)
@@ -369,8 +515,17 @@ class scRNAData():
     
 
     def gene_subset(self, pretrain_model_pth, **kwargs):
-        """
-        load the pretrained model genes and resize the data
+        """Resize the dataset to match a pretrained model's gene space.
+
+        Finds the intersection of genes between the current dataset and
+        the pretrained model, creates a new AnnData object aligned
+        to the model's gene ordering.
+
+        Parameters
+        ----------
+        pretrain_model_pth : str
+            Path to the pretrained model checkpoint file.
+
         """
         model_dir = os.path.dirname(pretrain_model_pth)
         model_dataname = os.path.basename(pretrain_model_pth)
@@ -418,12 +573,43 @@ class scRNAData():
         self.cell_encoder = data_info_loader('cell_encoder', os.path.dirname(pretrain_model_pth))
 
 
-    def use_pred_label(self, pretrain_model_pth, results_dir, exp_code,
-                        test_ratio, prob_mask=True, **kwargs):
-        """
-        Use pred label with high certainty as train, rest as test
+    def use_pred_label(self, pretrain_model_pth, results_dir, exp_code=None,
+                        test_ratio=None, prob_mask=True, **kwargs):
+        """Use pretrained model predictions to define train/test splits.
+
+        High-certainty predictions become the training set; uncertain
+        predictions become the test set. Replaces ``self.celltypes``
+        with the predicted labels.
+
+        Parameters
+        ----------
+        pretrain_model_pth : str
+            Path to the pretrained model checkpoint file.
+        results_dir : str
+            Directory containing prediction result files.
+        exp_code : str
+            Experiment code for file naming.
+        test_ratio : float
+            Unused; kept for API compatibility.
+        prob_mask : bool, optional
+            If True, filter by prediction certainty, by default True.
+
+
+        Returns
+        -------
+        train_idx : numpy.ndarray
+            Indices of high-certainty (certain) predictions.
+        test_idx : numpy.ndarray
+            Indices of uncertain predictions.
+
+        Raises
+        ------
+        FileNotFoundError
+            If the prediction CSV file is not found.
         """
         assert pretrain_model_pth is not None
+        if exp_code is None:
+            exp_code = 'protocloud'
         try:
             model_exp_code = os.path.basename(pretrain_model_pth)[:-4]
             model_exp_code = "_".join(model_exp_code.split("_")[:4] + [self.dataset_name])

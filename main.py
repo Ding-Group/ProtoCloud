@@ -120,21 +120,19 @@ def main(args):
             result_trend = ProtoCloud.model.run_model(model, 
                                     train_X, train_Y,
                                     test_X = test_X, test_Y = test_y, 
+                                    validate_model = True, 
                                     **args_dict
                                     )
         
         else:
             result_trend = ProtoCloud.model.run_model(model, 
                                     train_X, train_Y,
-                                    validate_model = False,
                                     **args_dict,
                                     )
 
-        # save model to model_dir
-        ProtoCloud.utils.save_model(model, args.model_dir, args.exp_code)
-        ProtoCloud.utils.save_model_dict(model_dict, args.model_dir)
-        ProtoCloud.utils.save_file(result_trend, args.results_dir, args.exp_code, '_trend.npy')
-        ProtoCloud.utils.save_file(ProtoCloud.model.get_prototypes(model), args.results_dir, args.exp_code, '_prototypes.npy')
+        # save model to model_dir (single API)
+        ProtoCloud.model.save_model(model, model_dict, args.model_dir, args.results_dir,
+                                   args.exp_code, result_trend=result_trend)
 
 
 
@@ -171,8 +169,7 @@ def main(args):
     #######################################################
     args_dict = vars(args)
     if args.model_mode != 'plot' and args.test_ratio != 0:
-        # predicted = ProtoCloud.model.get_predictions(model, test_X, False if args.model_mode == 'apply' else True)
-        predicted = ProtoCloud.model.get_predictions(model, test_X, False)
+        predicted = ProtoCloud.model.get_predictions(model, test_X)
         if model.obs_dist == 'nb' and test_Y is not None:
             try:
                 predicted['ll'] = ProtoCloud.model.get_log_likelihood(model, test_X, 
@@ -200,20 +197,18 @@ def main(args):
             label = test_Y
         
         predicted['idx'] = test_idx
-        predicted = pd.DataFrame(predicted)
-        ProtoCloud.utils.save_file(predicted, args.results_dir, args.exp_code, '_pred0.csv')
         # transform labels, add prediction comment (certain/ambiguous)
         predicted = ProtoCloud.utils.process_prediction_file(predicted, model_encoder, label, 
                                             model_dir = os.path.dirname(args.pretrain_model_pth) if args.pretrain_model_pth is not None else args.model_dir)
         
         # apply similarity calibrator
         loaded_calibrator = ProtoCloud.model.simCalibration.load(args.model_dir)
-        # gt = calibrator._create_ground_truth(predicted)
         calibrated_certainty = loaded_calibrator.predict_proba(predicted['sim_score'].values, predicted['pred1'].values)
         predicted['calibrated_certainty'] = calibrated_certainty
         
         if test_Y is not None:
-            loaded_calibrator.evaluate_calibration(predicted['sim_score'].values, label, predicted['pred1'].values)
+            loaded_calibrator.evaluate_calibration(predicted['sim_score'].values, calibrated_certainty,
+                                                   label, predicted['pred1'].values)
         
         ProtoCloud.utils.save_file(predicted, args.results_dir, args.exp_code, '_pred.csv')
         print("\nPredictions saved")
@@ -253,17 +248,33 @@ def main(args):
     
     if args.umap or args.two_latent:
         latent_embedding = ProtoCloud.utils.load_file(args.results_dir, args.exp_code, '_latent.npy')
-        # latent_embedding = get_latent(model, data.to_dense(data.adata, raw=True))
         proto_embedding = ProtoCloud.utils.load_file(args.results_dir, args.exp_code, '_prototypes.npy')
+
     if args.umap:
-        ProtoCloud.viz.plot_latent_embedding(latent_embedding[:, :args.latent_dim//2], 
-                            proto_embedding[:, :args.latent_dim//2], 
-                            pred = pred, orig = orig, 
-                            proto_label = data.cell_encoder.classes_,
-                            adata = data.adata[test_idx] if "batch" in data.adata.obs.columns else None,
-                            path = plot_path,
+        ProtoCloud.viz.plot_latent_embedding(latent_embedding,
+                            proto_embedding,
+                            pred=pred, orig=orig,
+                            proto_label=data.cell_encoder.classes_,
+                            adata=data.adata[test_idx] if "batch" in data.adata.obs.columns else None,
+                            path=plot_path,
                             **args_dict)
-        # plot_umap_embedding(args, data)
+
+    if args.two_latent:
+        ProtoCloud.viz.plot_direct_latent(
+            pc_latent=latent_embedding,
+            proto_latent=proto_embedding,
+            adata=data.adata,
+            model_labels=data.cell_encoder.classes_,
+            result_path=args.results_dir,
+            data_name=args.dataset_name,
+            save_plot=True,
+            prototypes_per_class=args.prototypes_per_class if hasattr(args, 'prototypes_per_class') else 6,
+            n_pairs=10,
+            type_color=None,
+            cell_alpha=0.5,
+            cell_size=1,
+            proto_size=30,
+        )
     
     if args.distance_dist:
         ProtoCloud.viz.plot_distance_to_prototypes(args, data)

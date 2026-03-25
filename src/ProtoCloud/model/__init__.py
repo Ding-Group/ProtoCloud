@@ -9,7 +9,7 @@ from ProtoCloud.model.train import (EPS, device, freeze_modules, get_latent,
                                     get_latent_decode, get_log_likelihood,
                                     get_predictions, get_prototype_cells,
                                     get_prototypes, get_recon, load_model,
-                                    num_workers, run_model,)
+                                    save_model, num_workers, run_model,)
 
 __all__ = ['simCalibration', 'EPS', 'calibrator', 'device', 'form_block',
            'freeze_modules', 'get_latent', 'get_latent_decode',

@@ -204,36 +204,20 @@ def log_likelihood_normal(x, mu, logvar):
 
 ### Results
 #######################################################
-def save_model(model, model_dir, exp_code, accu=None, log=print):
-    # save model to model_dir with name exp_code + accu
+def save_model(model, model_dir, exp_code=None):
+    if exp_code is None:
+        exp_code = 'protocloud'
+    # save model to model_dir with name exp_code
     save_path = os.path.join(model_dir, (exp_code + '.pth'))
-    if accu != None:
-        with open(os.path.join(model_dir,'saved_model.txt'), 'w') as f:
-            f.write('epoch:' + exp_code + ", acc:{0:.4f}".format(accu))
 
     print('\tSaving model to {0}...'.format(save_path))
     torch.save(model.state_dict(), save_path)
     print('Model saved')
 
 
-def save_model_w_condition(model, model_dir, exp_code, accu, target_accu, log=print):
-    '''
-    model: this is not the multigpu model
-    '''
-    save_path = os.path.join(model_dir, exp_code + '.pth')
-    if accu > target_accu:
-        log('\tAccuracy above {0:.2f}%'.format(target_accu * 100))
-        print('Saving model to {0}...'.format(save_path))
-        with open(os.path.join(model_dir,'saved_model.txt'), 'w') as f:
-            f.write('Setting:' + exp_code + ", acc:{0:.4f}".format(accu))
-        torch.save(model.state_dict(), save_path)
-        print('Model saved')
-
-    else:
-        print('\tAccuracy below {0:.2f}%, model not saved'.format(target_accu * 100))
-
-
-def save_prototype_cells(model, result_dir, exp_code):
+def save_prototype_cells(model, result_dir, exp_code=None):
+    if exp_code is None:
+        exp_code = 'protocloud'
     prototype_cells = model.get_prototype_cells().detach().cpu().numpy()
     protoCell_dir = os.path.join(result_dir, exp_code + '_protoCells.npy')
 
@@ -284,6 +268,10 @@ def model_metrics(predicted):
 
 def save_file(results, save_dir=None, exp_code=None, file_ending=None, save_path=None, **kwargs):
     # args.results_dir, args.exp_code
+    if exp_code is None:
+        exp_code = 'protocloud'
+    if file_ending is None:
+        file_ending = ''
     """
     Save the results to save dir or save path
     Args:
@@ -311,6 +299,11 @@ def save_file(results, save_dir=None, exp_code=None, file_ending=None, save_path
 
 
 def load_file(results_dir, exp_code=None, file_ending=None, path=None, **kwargs):
+    if exp_code is None:
+        exp_code = 'protocloud'
+    if file_ending is None:
+        file_ending = ''
+
     if path is None:
         file_path = os.path.join(results_dir, exp_code + file_ending)
     else:
@@ -330,7 +323,14 @@ def load_file(results_dir, exp_code=None, file_ending=None, path=None, **kwargs)
 
 
 
-def process_prediction_file(predicted, model_encoder, label=None, model_dir=None):
+def process_prediction_file(predicted, model_encoder=None, label=None, model_dir=None):
+    # model_encoder can be provided directly or loaded from model_dir
+    if model_encoder is None:
+        if model_dir is not None:
+            model_encoder = data_info_loader('cell_encoder', model_dir)
+        else:
+            raise ValueError('model_encoder or model_dir is required for process_prediction_file')
+
     predicted['certainty'] = None
     predicted['certainty_threshold'] = None
     predicted['ll_threshold'] = None

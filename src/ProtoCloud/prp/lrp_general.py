@@ -105,11 +105,36 @@ class  lrplookupnotfounderror(Exception):
 
 def get_lrpwrapperformodule(module, 
                             lrp_params, lrp_layer2method):
-  """
-  Args:
-    module: a PyTorch module (e.g., nn.Linear, nn.ReLU)
-    lrp_params: dict of LRP parameters
-    lrp_layer2method: class name of LRP method (autograd function)  
+  """Wrap a PyTorch module with the appropriate LRP propagation rule.
+
+  Inspects the module type (ReLU, BatchNorm1d, Linear) and the
+  requested autograd function to select the correct wrapper class
+  and pass rule-specific parameters (epsilon, gamma, etc.).
+
+  Parameters
+  ----------
+  module : torch.nn.Module
+      The PyTorch layer to wrap (e.g., ``nn.Linear``, ``nn.ReLU``,
+      ``nn.BatchNorm1d``).
+  lrp_params : dict
+      LRP configuration dictionary with keys ``'linear_eps'``,
+      ``'linear_gamma'``, ``'apply_filter'``, ``'linear_ignorebias'``.
+  lrp_layer2method : type
+      LRP autograd wrapper class (e.g.,
+      ``linearlayer_eps_wrapper_fct``). Called with no arguments to
+      create an instance for type dispatch.
+
+  Returns
+  -------
+  zeroparam_wrapper_class or oneparam_wrapper_class
+      The LRP-wrapped module.
+
+  Raises
+  ------
+  RuntimeError
+      If the autograd function is not recognized for ``nn.Linear``.
+  lrplookupnotfounderror
+      If the module type is not supported.
   """
   autogradfunction = lrp_layer2method()
   
@@ -243,7 +268,7 @@ class sim_score_eps_wrapper_fct(torch.autograd.Function):
         X = input_.clone().detach().requires_grad_(True)
         relevance_output = grad_output.clone().detach()
         
-        print('Init relevance: ', relevance_output.min().item(), relevance_output.max().item())
+        # print('Init relevance: ', relevance_output.min().item(), relevance_output.max().item())
 
         # with torch.enable_grad():
         #     d = torch.cdist(X[:, :latent_dim_half], 
@@ -280,7 +305,7 @@ class sim_score_eps_wrapper_fct(torch.autograd.Function):
         
         R = X.data * grad_input
 
-        print('sim_score rel backward: ', R.min().item(), R.max().item())
+        # print('sim_score rel backward: ', R.min().item(), R.max().item())
         # print('sim_score rel backward: ', torch.abs(R).min().item(), torch.abs(R).max().item())
         return R, None, None
 

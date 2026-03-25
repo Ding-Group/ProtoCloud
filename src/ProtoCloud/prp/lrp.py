@@ -49,14 +49,34 @@ rule_map = {
 def convert_protocloud_to_lrp(target_model, trained_model, 
                               lrp_params, rule_map, 
                               default_rule=linearlayer_Alpha1Beta0_wrapper_fct):
-    """
-    Args:
-        target_model: lrp model
-        trained_model: pretrained original model
-        lrp_params: {'linear_eps': 1e-6, ...}
-        rule_map: e.g. rule_map = {
-                        'encoder': linearlayer_Alpha1Beta0_wrapper_fct, 
-                        'z_mean': linearlayer_eps_wrapper_fct}
+    """Convert a trained ProtoCloud model to an LRP-compatible version.
+
+    Processes each module by fusing BatchNorm parameters into Linear
+    layers and wrapping them with appropriate LRP propagation rules.
+    The converted model supports gradient-based relevance propagation
+    while preserving the original model's forward behavior.
+
+    Parameters
+    ----------
+    target_model : protoCloud
+        An uninitialized or empty ProtoCloud model instance that will
+        be populated with LRP-wrapped modules.
+    trained_model : protoCloud
+        The original pre-trained model to copy weights from.
+    lrp_params : dict
+        LRP configuration with keys:
+
+        - ``'linear_eps'`` : float — epsilon for the LRP-epsilon rule.
+        - ``'linear_gamma'`` : float — gamma for the LRP-gamma rule.
+        - ``'apply_filter'`` : bool — whether to apply top-k filtering.
+        - ``'linear_ignorebias'`` : bool — whether to ignore bias.
+    rule_map : dict
+        Mapping from module name (e.g., ``'encoder'``, ``'z_mean'``,
+        ``'classifier'``) to an LRP autograd wrapper class. Modules
+        not present in the map use ``default_rule``.
+    default_rule : autograd.Function, optional
+        Default LRP rule for modules not specified in ``rule_map``,
+        by default ``linearlayer_Alpha1Beta0_wrapper_fct``.
     """
     # --- Encoder (Sequential: Linear -> BN -> ReLU) ---
     target_model.encoder = nn.Sequential()
@@ -147,12 +167,37 @@ def convert_protocloud_to_lrp(target_model, trained_model,
             target_module = getattr(target_module, module_name)
         setattr(target_module, param_attr, nn.Parameter(param.clone().detach()))
         
-    print("ProtoCloud LRP Model Conversion Complete.")
+    print("ProtoCloud PRP Model Conversion Complete.")
 
 
 
 def x_prp1(model_wrapped, input, idx, cls_protos):
-    """Modified x_prp: masked sim scores to closest prototype per class"""
+    """Compute per-prototype relevance scores via contrastive backpropagation.
+
+    Performs a forward pass through the LRP-wrapped model, constructs a
+    contrastive gradient signal that amplifies the target prototype and
+    suppresses others, then backpropagates to obtain input-level relevance.
+    Only cells whose nearest prototype matches ``idx`` are included.
+
+    Parameters
+    ----------
+    model_wrapped : protoCloud
+        LRP-wrapped ProtoCloud model (output of
+        ``convert_protocloud_to_lrp``).
+    input : numpy.ndarray
+        Gene expression matrix, shape ``(n_cells, n_genes)``.
+    idx : int
+        Global index of the target prototype.
+    cls_protos : slice
+        Slice selecting all prototype indices belonging to the target
+        class (e.g., ``slice(6, 12)``).
+
+    Returns
+    -------
+    rel_mean : numpy.ndarray
+        Mean relevance scores across selected cells, shape ``(n_genes,)``.
+    count : int
+        Number of cells whose nearest prototype matched ``idx``."""
     x = torch.Tensor(input).to(device)
     x.requires_grad = True
 
@@ -248,13 +293,64 @@ def normalize_max_abs(relevance_scores, epsilon=1e-9):
 
 
 def generate_PRP_explanations(model,              # model_wrapped
-                              train_X, train_Y, 
+                              train_X, train_Y,
                               data,
-                              epsilon, 
+                              epsilon,
                               num_classes, prototypes_per_class,
-                              prp_path=None, exp_code=None, 
+                              prp_path=None, exp_code=None,
                               pretrain_model_pth=None,
                               **kwargs):
+    """Generate Prototype Relevance Propagation explanations for all prototypes.
+
+    For each class and prototype, computes per-gene relevance scores using
+    contrastive backpropagation (``x_prp1``). Scores are normalized,
+    aggregated into cell-type-level weighted averages, and saved as
+    per-class ``.npy`` files, a cell-type CSV, and a prototype-level
+    AnnData ``.h5ad`` file. Supports incremental updates from a
+    pretrained model checkpoint.
+
+    Parameters
+    ----------
+    model : protoCloud
+        LRP-wrapped ProtoCloud model in eval mode.
+    train_X : numpy.ndarray
+        Training gene expression matrix, shape ``(n_cells, n_genes)``.
+    train_Y : numpy.ndarray
+        Encoded numeric training labels, shape ``(n_cells,)``.
+    data : scRNAData
+        Data handler providing ``gene_names`` and ``cell_encoder``.
+    epsilon : float
+        Epsilon value (unused internally, kept for API consistency).
+    num_classes : int
+        Number of cell types.
+    prototypes_per_class : int
+        Number of prototypes per cell type.
+    prp_path : str, optional
+        Directory path for saving PRP output files.
+    exp_code : str, optional
+        Experiment code used in output file names.
+    pretrain_model_pth : str, optional
+        Path to a pretrained model checkpoint. If provided, loads
+        previous PRP scores from ``prototype_checkpoint.npy`` in the
+        same directory and uses them as fallback for prototypes with
+        no matching cells.
+    **kwargs
+        Additional keyword arguments (unused).
+
+    Returns
+    -------
+    dict
+        Checkpoint dictionary with keys:
+
+        - ``'cell_types'`` : array of cell type names.
+        - ``'prp_scores'`` : ndarray of shape
+          ``(num_classes, prototypes_per_class, n_genes)``.
+        - ``'gene_names'`` : array of gene names.
+        - ``'counts'`` : ndarray of shape
+          ``(num_classes, prototypes_per_class)``.
+    """
+    if exp_code is None:
+        exp_code = 'protocloud'
     model.eval()
 
     gene_names = data.gene_names
@@ -293,7 +389,7 @@ def generate_PRP_explanations(model,              # model_wrapped
             if len(idx) > 0:
                 try:
                     p_rel_score, p_count = x_prp1(model, train_X[idx, :], global_p_idx, cls_protos)
-                    print(f"Class {c} Proto {pno}: Count = {p_count}, min={np.min(p_rel_score):.6f}, max={np.max(p_rel_score):.6f}")
+                    # print(f"Class {c} Proto {pno}: Count = {p_count}, min={np.min(p_rel_score):.6f}, max={np.max(p_rel_score):.6f}")
                 except Exception as e:
                     print(f"Error computing x_prp1 for Class {c} Proto {pno}: {e}")
                     p_rel_score = np.zeros(n_genes)
@@ -312,7 +408,7 @@ def generate_PRP_explanations(model,              # model_wrapped
         
         # save celltype corresponding PRP genes (scaled)
         if np.sum(global_counts[c]) > 0:
-            print(cell_types[c], global_prp_scores[c].shape)
+            # print(cell_types[c], global_prp_scores[c].shape)
             # class_prp = scaler.fit_transform(global_prp_scores[c].T).T
             class_prp = normalize_max_abs(global_prp_scores[c])
             path = prp_path + cell_types[c].replace("/", " OR ") + "_"+exp_code+"_relgenes.npy"

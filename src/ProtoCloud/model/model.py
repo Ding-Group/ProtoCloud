@@ -22,14 +22,32 @@ def form_block(in_dim, out_dim,
                 use_bn = True, activation = 'relu',
                 bias = False, dropout = 0,
                 ):
-    """
-    Constructs a fully connected layer with bias, batch norm, and then leaky relu activation function
-    args:
-        in_dim (int): input dimension
-        out_dim (int): output dimension
-        batch_norm (bool): use the batch norm in the layers, defaults to True
-        bias (bool): add bias to the layers
-    returns (array): the layers specified
+    """Construct a sequential block of Linear, BatchNorm, activation, and dropout.
+
+    Parameters
+    ----------
+    in_dim : int
+        Input feature dimension.
+    out_dim : int
+        Output feature dimension.
+    use_bn : bool, optional
+        Whether to include BatchNorm1d, by default True.
+    activation : {'relu', 'leakyrelu'}, optional
+        Activation function type, by default 'relu'.
+    bias : bool, optional
+        Whether to add bias to the Linear layer, by default False.
+    dropout : float, optional
+        Dropout rate. Set to 0 to disable, by default 0.
+
+    Returns
+    -------
+    torch.nn.Sequential
+        The composed layer block.
+
+    Raises
+    ------
+    ValueError
+        If ``activation`` is not recognized.
     """
     layers = [nn.Linear(in_dim, out_dim, bias=bias)]
     if use_bn:
@@ -48,11 +66,45 @@ def form_block(in_dim, out_dim,
 
     
 class protoCloud(nn.Module):
+    """
+    ProtoCloud, a self-explaining deep generative model trained end-to-end to embed cells into a structured, low-dimensional space organized around cell type-specific prototypes.
+
+    Parameters
+    ----------
+    input_dim : int
+        Number of input genes.
+    num_prototypes_per_class : int
+        Number of prototype vectors per cell type.
+    num_classes : int
+        Number of cell types.
+    latent_dim : int
+        Dimensionality of the latent space.
+    raw_input : int
+        1 if input is raw counts (applies log1p), 0 if log-normalized.
+    encoder_layer_sizes : list of int, optional
+        Hidden layer sizes for the encoder, by default [1024, 512, 256].
+    decoder_layer_sizes : list of int, optional
+        Hidden layer sizes for the decoder, by default [512, 1024].
+    activation : {'relu', 'leakyrelu'}, optional
+        Activation function, by default 'relu'.
+    use_bias : bool, optional
+        Whether to use bias in Linear layers, by default False.
+    use_dropout : float, optional
+        Dropout rate, by default 0.
+    use_bn : bool, optional
+        Whether to use batch normalization, by default True.
+    obs_dist : {'nb', 'normal'}, optional
+        Observation distribution for reconstruction, by default 'nb'.
+    nb_dispersion : {'celltype_target', 'celltype_pred', 'gene'}, optional
+        How to model negative binomial dispersion, by default
+        'celltype_target'.
+    """
+
     def __init__(self, input_dim:int,
-                 num_prototypes_per_class:int, 
-                 num_classes:int,  
-                 latent_dim:int, 
-                 raw_input:int, 
+                 num_classes:int,
+                 num_prototypes_per_class: int = 6,
+                 latent_dim: int = 20,
+                 raw_input:int = 1,
                  encoder_layer_sizes: Optional[list] = None,
                  decoder_layer_sizes: Optional[list] = None,
                  activation: Literal['relu', 'leakyrelu'] = 'relu', 
@@ -136,6 +188,30 @@ class protoCloud(nn.Module):
 
 
     def forward(self, x, batch_id=None):
+        """Forward pass through the full model.
+
+        Parameters
+        ----------
+        x : torch.Tensor
+            Input gene expression of shape ``(batch_size, input_dim)``.
+        batch_id : optional
+            Batch information (currently unused).
+
+        Returns
+        -------
+        pred : torch.Tensor
+            Classification logits, shape ``(batch_size, num_classes)``.
+        px_mu : torch.Tensor
+            Reconstruction mean, shape ``(batch_size, input_dim)``.
+        px_t : torch.Tensor or None
+            Dispersion parameters for NB distribution, or None.
+        z_mu : torch.Tensor
+            Latent mean, shape ``(batch_size, latent_dim)``.
+        z_logVar : torch.Tensor
+            Latent log-variance, shape ``(batch_size, latent_dim)``.
+        sim_scores : torch.Tensor
+            Prototype similarity scores, shape ``(batch_size, num_prototypes)``.
+        """
         self.lib_size = torch.sum(x, 1, True)
 
         if self.raw_input:     # raw: 1
@@ -170,16 +246,67 @@ class protoCloud(nn.Module):
 
     
     def reparameterize(self, mu, logvar):
+        """Sample from the latent distribution using the reparameterization trick.
+
+        Computes ``z = mu + exp(logvar / 2) * epsilon`` where epsilon is
+        sampled from a standard normal.
+
+        Parameters
+        ----------
+        mu : torch.Tensor
+            Mean of the latent distribution.
+        logvar : torch.Tensor
+            Log-variance of the latent distribution.
+
+        Returns
+        -------
+        torch.Tensor
+            Sampled latent vector, same shape as ``mu``.
+        """
         std = torch.exp(logvar / 2)
         eps = torch.randn_like(std)
 
         return mu + std * eps
     
 
-    def loss_function(self, x, target, pred, 
-                      px_mu, px_theta, 
-                      z_mu, z_logVar, 
+    def loss_function(self, x, target, pred,
+                      px_mu, px_theta,
+                      z_mu, z_logVar,
                       sim_scores):
+        """Compute all loss components for training.
+
+        Parameters
+        ----------
+        x : torch.Tensor
+            Input gene expression, shape ``(batch_size, input_dim)``.
+        target : torch.Tensor
+            Ground truth class labels, shape ``(batch_size,)``.
+        pred : torch.Tensor
+            Classification logits from the forward pass.
+        px_mu : torch.Tensor
+            Reconstruction mean from the forward pass.
+        px_theta : torch.Tensor
+            Dispersion parameters from the forward pass.
+        z_mu : torch.Tensor
+            Latent mean from the forward pass.
+        z_logVar : torch.Tensor
+            Latent log-variance from the forward pass.
+        sim_scores : torch.Tensor
+            Prototype similarity scores from the forward pass.
+
+        Returns
+        -------
+        recon_loss : torch.Tensor
+            Reconstruction loss (NB log-likelihood or MSE).
+        kl_loss : torch.Tensor
+            KL divergence to class prototypes.
+        classify_loss : torch.Tensor
+            Cross-entropy classification loss.
+        ortho_loss : torch.Tensor
+            Orthogonality loss for prototype separation.
+        atomic_loss : torch.Tensor
+            Attraction/repulsion loss for prototype assignment.
+        """
         if target.max() >= self.prototype_class_identity.shape[0]:
             print("Max target:", target.max())
             print("Shape of prototype_class_identity:", self.prototype_class_identity.shape)
@@ -215,6 +342,22 @@ class protoCloud(nn.Module):
 
 
     def calc_sim_scores(self, z):
+        """Compute similarity scores between latent embeddings and prototypes.
+
+        Uses the first half of latent dimensions to compute pairwise
+        Euclidean distances, then converts to similarities via the
+        Cauchy kernel.
+
+        Parameters
+        ----------
+        z : torch.Tensor
+            Latent embeddings, shape ``(batch_size, latent_dim)``.
+
+        Returns
+        -------
+        torch.Tensor
+            Similarity scores, shape ``(batch_size, num_prototypes)``.
+        """
         # pairwise Euclidean distances between z and prototype vectors
         d = torch.cdist(z[:, :self.latent_dim // 2], 
                         self.prototype_vectors[:, :self.latent_dim // 2], p = 2)  ## Batch size x num_prototypes
@@ -223,11 +366,48 @@ class protoCloud(nn.Module):
 
 
     def distance_2_similarity(self, distances):
+        """Convert distances to similarities using a Cauchy kernel.
+
+        Computes ``1 / (scale^2 * d^2 + 1)``, yielding values in [0, 1].
+
+        Parameters
+        ----------
+        distances : torch.Tensor
+            Pairwise distance values.
+
+        Returns
+        -------
+        torch.Tensor
+            Similarity scores in [0, 1], same shape as input.
+        """
         # return torch.log((distances + 1) / (distances + self.epsilon))
         return 1.0 / (torch.square(distances * self.scale) + 1.0)   # heavy tail
 
 
     def recon_loss(self, x, target, px_mu, px_t):
+        """Compute reconstruction loss.
+
+        Uses negative binomial log-likelihood for count data or MSE
+        for normalized data.
+
+        Parameters
+        ----------
+        x : torch.Tensor
+            Ground truth expression, shape ``(batch_size, input_dim)``.
+        target : torch.Tensor
+            Class labels, used for cell-type-specific dispersion.
+        px_mu : torch.Tensor
+            Predicted reconstruction mean.
+        px_t : torch.Tensor or None
+            Dispersion parameters.
+
+        Returns
+        -------
+        loss : torch.Tensor
+            Scalar reconstruction loss.
+        dispersion : torch.Tensor or None
+            Computed dispersion values, or None for normal distribution.
+        """
         if self.obs_dist == 'nb':
             if self.nb_dispersion.startswith('celltype'):
                 dispersion = F.linear(one_hot_encoder(target, self.num_classes), self.theta)
@@ -251,7 +431,32 @@ class protoCloud(nn.Module):
 
 
     def kl_divergence_nearest(self, mu, logVar, nearest_pt, sim_scores):
-        kl_loss = torch.zeros(sim_scores.shape).to(device) 
+        """Compute KL divergence to nearest class prototypes.
+
+        The first half of the latent space is regularized toward prototype
+        distributions (weight 5); the second half toward a standard
+        normal (weight 1). Losses are weighted by similarity scores.
+
+        Parameters
+        ----------
+        mu : torch.Tensor
+            Latent means, shape ``(batch_size, latent_dim)``.
+        logVar : torch.Tensor
+            Latent log-variances, shape ``(batch_size, latent_dim)``.
+        nearest_pt : torch.Tensor
+            Prototype indices for correct class, shape
+            ``(batch_size, num_prototypes_per_class)``.
+        sim_scores : torch.Tensor
+            Similarity scores, shape ``(batch_size, num_prototypes)``.
+
+        Returns
+        -------
+        kl_loss : torch.Tensor
+            Scalar KL divergence loss.
+        mask : torch.Tensor
+            Boolean mask indicating contributing prototypes.
+        """
+        kl_loss = torch.zeros(sim_scores.shape).to(device)
         half_latent = self.latent_dim // 2
 
         for i in range(self.num_prototypes_per_class):
@@ -280,6 +485,17 @@ class protoCloud(nn.Module):
 
 
     def orthogonal_loss(self):
+        """Compute orthogonality loss for prototype diversity.
+
+        Encourages prototypes within the same class to be orthogonal
+        in the first half of the latent space. Also includes L1
+        sparsity regularization on the first encoder layer weights.
+
+        Returns
+        -------
+        torch.Tensor
+            Scalar orthogonality + sparsity loss.
+        """
         s_loss = 0
         for k in range(self.num_classes):
             # p_k = self.prototype_vectors[k*self.num_prototypes_per_class : (k+1)*self.num_prototypes_per_class, :]
@@ -298,6 +514,24 @@ class protoCloud(nn.Module):
 
 
     def atomic_loss(self, sim_scores, mask):
+        """Compute attraction/repulsion loss for prototype assignment.
+
+        Encourages high similarity to correct-class prototypes
+        (attraction) and low similarity to incorrect-class prototypes
+        (repulsion).
+
+        Parameters
+        ----------
+        sim_scores : torch.Tensor
+            Prototype similarities, shape ``(batch_size, num_prototypes)``.
+        mask : torch.Tensor
+            Boolean mask for correct-class prototypes.
+
+        Returns
+        -------
+        torch.Tensor
+            Scalar loss (repulsion - attraction).
+        """
         attraction = torch.mean(torch.max(sim_scores * mask, 1).values)
         repulsion = torch.mean(torch.max(sim_scores * torch.logical_not(mask), 1).values)
         # repulsion = torch.sum(torch.mean(sim_scores * torch.logical_not(mask), 1).values)
@@ -306,9 +540,16 @@ class protoCloud(nn.Module):
 
 
     def set_last_layer_incorrect_connection(self, incorrect_strength):
-        '''
-        the incorrect strength will be actual strength if -0.5 then input -0.5
-        '''
+        """Initialize classifier weights based on prototype-class identity.
+
+        Sets weights to 1 for correct class connections and
+        ``incorrect_strength`` for incorrect class connections.
+
+        Parameters
+        ----------
+        incorrect_strength : float
+            Weight for incorrect class connections (e.g., -0.5).
+        """
         positive_one_weights_locations = torch.t(self.prototype_class_identity)
         negative_one_weights_locations = 1 - positive_one_weights_locations
 
@@ -352,9 +593,21 @@ class protoCloud(nn.Module):
     #######################################################
     @property
     def get_prototypes(self):
+        """torch.Tensor : Prototype vectors of shape ``(num_prototypes, latent_dim)``."""
         return self.prototype_vectors
     
     def get_prototype_cells(self):
+        """Decode prototype vectors to gene expression space.
+
+        Samples 100 times from the reconstruction distribution for each
+        prototype and returns the mean counts.
+
+        Returns
+        -------
+        torch.Tensor
+            Prototype cells in gene space, shape
+            ``(num_prototypes, input_dim)``.
+        """
         px_mu, px_theta = self.get_latent_decode(self.prototype_vectors)
         # sample 100 and take avg for each
         proto_cells = torch.zeros(self.num_prototypes, self.input_dim)
@@ -368,6 +621,20 @@ class protoCloud(nn.Module):
 
 
     def max_sim_score(self, sim_scores):
+        """Find the maximum similarity score per class and the best-matching prototype.
+
+        Parameters
+        ----------
+        sim_scores : torch.Tensor
+            Similarity scores, shape ``(batch_size, num_prototypes)``.
+
+        Returns
+        -------
+        max_sim : torch.Tensor
+            Maximum similarity to nearest prototype, shape ``(batch_size,)``.
+        nearest_proto_idx : torch.Tensor
+            Index of the nearest prototype within its class, shape ``(batch_size,)``.
+        """
         sim_reshaped = sim_scores.view(-1, self.num_classes, self.num_prototypes_per_class)
 
         # max sim to a prototype for each class
@@ -380,7 +647,26 @@ class protoCloud(nn.Module):
         return max_sim, nearest_proto_idx
 
 
-    def get_pred(self, x, test = False):
+    def get_pred(self, x, test=False):
+        """Get classification predictions.
+
+        Parameters
+        ----------
+        x : torch.Tensor
+            Input gene expression, shape ``(batch_size, input_dim)``.
+        test : bool, optional
+            If True, use latent mean only (deterministic); otherwise
+            sample via reparameterization, by default False.
+
+        Returns
+        -------
+        pred : torch.Tensor
+            Classification logits, shape ``(batch_size, num_classes)``.
+        max_sim : torch.Tensor
+            Maximum similarity to nearest prototype.
+        proto_idx : torch.Tensor
+            Index of the nearest prototype.
+        """
         self.eval()
         if self.raw_input:     # raw: 1
             x = torch.log1p(x)
@@ -401,6 +687,18 @@ class protoCloud(nn.Module):
     
 
     def get_latent(self, x):
+        """Encode input to latent mean (deterministic, no sampling).
+
+        Parameters
+        ----------
+        x : torch.Tensor
+            Input gene expression, shape ``(batch_size, input_dim)``.
+
+        Returns
+        -------
+        torch.Tensor
+            Latent means, shape ``(batch_size, latent_dim)``.
+        """
         self.eval()
         if self.raw_input:
             x = torch.log1p(x)
@@ -411,6 +709,20 @@ class protoCloud(nn.Module):
 
 
     def get_latent_decode(self, z):
+        """Decode latent vectors to gene expression space.
+
+        Parameters
+        ----------
+        z : torch.Tensor
+            Latent embeddings, shape ``(batch_size, latent_dim)``.
+
+        Returns
+        -------
+        px_mu : torch.Tensor
+            Reconstruction mean, shape ``(batch_size, input_dim)``.
+        px_t : torch.Tensor or None
+            Dispersion parameters, or None for normal distribution.
+        """
         px = self.decoder(z)
         px_mu = self.px_mean(px)
         px_t = self.px_theta(px)
@@ -433,6 +745,20 @@ class protoCloud(nn.Module):
 
 
     def get_recon(self, x):
+        """Reconstruct input via full encode-decode pipeline.
+
+        Parameters
+        ----------
+        x : torch.Tensor
+            Input gene expression, shape ``(batch_size, input_dim)``.
+
+        Returns
+        -------
+        px_mu : torch.Tensor
+            Reconstruction mean.
+        px_t : torch.Tensor or None
+            Dispersion parameters, or None for normal distribution.
+        """
         self.eval()
         if self.raw_input:     # raw: 1
             x = torch.log1p(x)
@@ -448,6 +774,30 @@ class protoCloud(nn.Module):
 
 
     def get_log_likelihood(self, input, target=None):
+        """Compute negative log-likelihood averaged over multiple samples.
+
+        Samples 5 times with different random seeds and averages the
+        negative binomial log-likelihood across samples.
+
+        Parameters
+        ----------
+        input : torch.Tensor
+            Input gene expression, shape ``(batch_size, input_dim)``.
+        target : torch.Tensor, optional
+            Ground truth labels, required when ``nb_dispersion`` is
+            ``'celltype_target'``.
+
+        Returns
+        -------
+        torch.Tensor
+            Mean negative log-likelihood per cell, shape ``(batch_size,)``.
+
+        Raises
+        ------
+        NotImplementedError
+            If ``obs_dist`` is not ``'nb'`` or if ``target`` is required
+            but not provided.
+        """
         if self.obs_dist != 'nb':
             raise NotImplementedError
         elif self.nb_dispersion == 'celltype_target' and target is None:
@@ -490,6 +840,24 @@ class protoCloud(nn.Module):
 
 
     def sample_recon(self, px_mu, px_t, sample_size):
+        """Sample from the negative binomial reconstruction distribution.
+
+        Uses a Gamma-Poisson compound to generate count samples.
+
+        Parameters
+        ----------
+        px_mu : torch.Tensor
+            Reconstruction mean.
+        px_t : torch.Tensor
+            Dispersion (concentration) parameter.
+        sample_size : int
+            Number of samples to draw.
+
+        Returns
+        -------
+        torch.Tensor
+            Sampled counts, shape ``(sample_size, ..., input_dim)``.
+        """
         concentration = px_t
         rate = px_t / px_mu
         # Gamma(alpha, beta: rate = 1/scale)

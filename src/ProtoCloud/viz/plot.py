@@ -30,9 +30,10 @@ num_workers = 4 if torch.cuda.is_available() else 0
 
 
 ### plot functions
-def plot_epoch_trend(epochs, results_dir, plot_dir, exp_code, **kwargs):
+def plot_epoch_trend(epochs, results_dir, plot_dir, exp_code=None, **kwargs):
+    if exp_code is None:
+        exp_code = 'protocloud'
     # epochs, results_dir, plot_dir, exp_code, **kwargs
-    # print(result_file)
     trend = load_file(results_dir, exp_code, '_trend.npy')
     
     epochs = range(0, epochs+1)
@@ -309,9 +310,9 @@ def plot_latent_embedding(latent_embedding, proto_embedding=None,
         # 2nd-half, celltype
         plot_umap(pc_umap2, cell_labels, type_color=type_color,
                 a=1, s=20, ax=axs[2])
-        plot_protos_umap(proto_umap2, model_labels,
-                        prototypes_per_class=6, s=30,
-                        type_color=type_color, ax=axs[2])
+        # plot_protos_umap(proto_umap2, model_labels,
+        #                 prototypes_per_class=6, s=30,
+        #                 type_color=type_color, ax=axs[2])
 
         # ──[1,1]─ 2nd-half, 按 Experiment
         adata.obsm['X_umap'] = pc_umap2
@@ -342,165 +343,100 @@ def plot_latent_embedding(latent_embedding, proto_embedding=None,
 
 
 def plot_2latent(transformed_data, all_labels, type_color=None, s=1, a=1, ax=None, show_legend=False,
-                 axis_x = 'Latent_1', axis_y ='Latent_2'):
+                 axis_x='Latent_1', axis_y='Latent_2'):
+    """Scatter plot of a 2D latent slice for cells."""
+    if transformed_data.shape[1] < 2:
+        raise ValueError("transformed_data must have at least 2 dimensions")
+
     mapped_color = map_color(all_labels, type_color)
 
     if ax is None:
-        f, ax = plt.subplots(1, figsize = (14, 10))
+        _, ax = plt.subplots(1, figsize=(14, 10))
 
-    # plot latent embeddings
-    ax.scatter(transformed_data[:, 0], transformed_data[:, 1],
-                s=s, alpha=a,
-                color=mapped_color)
-
+    ax.scatter(
+        transformed_data[:, 0], transformed_data[:, 1],
+        s=s, alpha=a, color=mapped_color,
+        linewidths=0 if a < 1 else 0.5
+    )
     ax.set_xlabel(axis_x)
     ax.set_ylabel(axis_y)
     if show_legend:
+        # legend entries require line handles; currently no labels on points
         ax.legend(loc='upper left', bbox_to_anchor=(1, 1))
 
 
 def plot_protos_2latent(proto_embedding, model_labels, type_color=None,
-                    prototypes_per_class = 6, s=25, a=1,
-                    ax=None, show_legend=False):
-    model_labels = [x for x in model_labels for _ in range(prototypes_per_class)]
-    mapped_color = map_color(model_labels, type_color)
+                        prototypes_per_class=6, s=25, a=1,
+                        ax=None, show_legend=False):
+    """Scatter plot of prototype points in a 2D latent slice."""
+    if proto_embedding.shape[1] < 2:
+        raise ValueError("proto_embedding must have at least 2 dimensions")
 
-    ax.scatter(proto_embedding[:, 0], proto_embedding[:, 1],
-                s=s, alpha=a,
-                linewidth=1,
-                edgecolors="k",
-                marker="o",
-                color=mapped_color)
+    # replicate model labels consistently with prototypes_per_class of each class
+    expanded_labels = [x for x in model_labels for _ in range(prototypes_per_class)]
+    mapped_color = map_color(expanded_labels, type_color)
 
+    if ax is None:
+        _, ax = plt.subplots(1, figsize=(14, 10))
+
+    ax.scatter(
+        proto_embedding[:, 0], proto_embedding[:, 1],
+        s=s, alpha=a, linewidth=1,
+        edgecolors='k', marker='o', color=mapped_color
+    )
     if show_legend:
         ax.legend(loc='upper left', bbox_to_anchor=(1, 1))
 
 
-# def plot_latent_embedding(latent_embedding, proto_embedding=None, 
-#                         pred=None, orig=None, proto_label=None,
-#                         plot_dim: Optional[int] = None,
-#                         prototypes_per_class: Optional[int] = 6,
-#                         all_color = None,
-#                         path: Optional[str] = None, 
-#                         **kwargs):
-#     """
-#     Plot the latent embedding of the data.
-#     args:
-#         latent_embedding
-#             The data that we are finding an embedding for, shape (n,d)
-#         proto_embedding
-#             The prototypes of the model, shape (k,d)
-        
-#     """ 
-#     if plot_dim != 2:
-#         half_dim = latent_embedding.shape[1] // 2
-#         path_ending = "_umap.pdf"
-#         umap_kwargs = {'n_neighbors': 10, 'min_dist': 0.05}
-#         embedding = umap.UMAP(**umap_kwargs).fit_transform(np.concatenate((latent_embedding, proto_embedding), axis = 0))
-#         latent_embedding = embedding[:latent_embedding.shape[0], :]
-#         proto_embedding = embedding[latent_embedding.shape[0]:, :] if proto_embedding is not None else None
-#     else:
-#         path_ending = "_2latent.pdf"
-#         latent_embedding = latent_embedding[:, 0:2]
-#         proto_embedding = proto_embedding[:, 0:2] if proto_embedding is not None else None
+def plot_direct_latent(pc_latent, proto_latent, adata, model_labels,
+                       result_path=None, data_name=None,
+                       save_plot=True, prototypes_per_class=6,
+                       n_pairs=10, type_color=None,
+                       cell_alpha=0.5, cell_size=1, proto_size=30):
+    """Plot direct 2D latent slice panels in the style of user snippet."""
+    labels = adata.obs['celltype'].values
+    if type_color is None:
+        type_color = get_color(np.unique(labels))
 
+    n_dim = pc_latent.shape[1]
+    max_pairs = n_dim // 2
+    n_pairs = min(n_pairs, max_pairs)
+    n_subplots = n_pairs
 
-#     # color cells by groundtruth unless DNE use model labels
-#     if orig is not None:
-#         cell_labels = np.unique(orig)
-#         y = orig
-#     else:
-#         cell_labels = np.unique(pred)
-#         y = pred
-#         print("\tNo ground truth, color cell embedding by prediction")
-#     # if plot prototypes, use model labels
-#     if proto_embedding is not None:
-#         model_labels = proto_label
-#     else:
-#         model_labels = []
-#     all_labels = set(set(list(np.unique(model_labels))+list(np.unique(cell_labels))))
+    n_cols = 5
+    n_rows = (n_subplots + n_cols - 1) // n_cols
+
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=(20, 8))
+    axes = axes.flatten()
+
+    for i in range(n_subplots):
+        ax = axes[i]
+        x_slice = pc_latent[:, (i * 2):(i * 2 + 2)]
+        proto_slice = proto_latent[:, (i * 2):(i * 2 + 2)]
+
+        plot_2latent(x_slice, labels, type_color=type_color, a=cell_alpha,
+                     s=cell_size, ax=ax,
+                     axis_x=f'Latent {i * 2 + 1}',
+                     axis_y=f'Latent {i * 2 + 2}')
+
+        plot_protos_2latent(proto_slice, model_labels,
+                            prototypes_per_class=prototypes_per_class,
+                            s=proto_size, a=1.0,
+                            ax=ax)
+
+    # Hide unused axes
+    for ax in axes[n_subplots:]:
+        ax.axis('off')
+
+    plt.tight_layout()
+
+    if save_plot and result_path is not None and data_name is not None:
+        out_path = os.path.join(result_path, data_name, 'plots')
+        os.makedirs(out_path, exist_ok=True)
+        filename = f'latent_celltype_0_{n_pairs * 2}.pdf'
+        plt.savefig(os.path.join(out_path, filename), bbox_inches='tight', format='pdf')
     
-#     if all_color is None:
-#         cmap = plt.cm.nipy_spectral
-#         norm = plt.Normalize(0, len(all_labels)-1)
-#         all_color_list = [cmap(i) for i in np.linspace(0, 1, len(all_labels))]
-#         all_color = {}
-#         for i, c in enumerate(all_labels):
-#             all_color[c] = all_color_list[i]
-
-
-#     f, ax = plt.subplots(1, figsize = (14, 10))
-#     # plot latent embeddings, color according to orig labels
-#     for label in cell_labels:
-#         ax.scatter(
-#             *latent_embedding[y == label, :].T,
-#             s=3, # point size
-#             alpha=0.5,
-#             color = all_color[label],
-#             label = label,
-#             )
-#         x_center = np.mean(latent_embedding[y == label, 0])
-#         y_center = np.mean(latent_embedding[y == label, 1])
-#         ax.text(x_center*1.02, y_center*1.05,
-#                 label, 
-#                 color = all_color[label],
-#                 fontsize = 6,
-#                 style = 'oblique', 
-#                 horizontalalignment='center',
-#                 verticalalignment='top',
-#                 wrap=True,
-#                 bbox=dict(boxstyle='round,pad=0.05', fc='w', lw=0, alpha=0.8),
-#                 )
-    
-#     if proto_embedding is not None:
-#         # plot prototype embeddings, color according to prototype labels
-#         for t, label in enumerate(model_labels):
-#             count = prototypes_per_class * t
-#             for i in range(prototypes_per_class):
-#                 ax.scatter(
-#                     *proto_embedding[count+i, :].T,
-#                     s=60,
-#                     linewidth=0.7,
-#                     edgecolors="k",
-#                     marker="o",
-#                     alpha=0.8,
-#                     color = all_color[label],
-#                 )
-#             # add class label text at the center of each prototype embeddings
-#             x_center = np.mean(proto_embedding[count : count+prototypes_per_class, 0])
-#             y_center = np.mean(proto_embedding[count : count+prototypes_per_class, 1])
-#             ax.text(x_center*1.02, y_center*1.05,
-#                     label, 
-#                     color = all_color[label],
-#                     fontsize = 8,
-#                     style = "italic", 
-#                     horizontalalignment='center',
-#                     verticalalignment='top',
-#                     wrap=True,
-#                     bbox=dict(boxstyle='round,pad=0.05', fc='w', lw=0, alpha=0.8),
-#                     )
-
-#     legend_handles = []
-#     for label, color in all_color.items():
-#         handle = mlines.Line2D([], [], color=color, linestyle='None', marker='o', markersize=20, label=label)
-#         legend_handles.append(handle)
-#     ncol = 1 if len(all_labels) < 20 else len(all_labels)//20
-#     ax.legend(handles=legend_handles, bbox_to_anchor=(1.04, 1), loc="upper left", ncol=ncol)
-
-#     ax = plt.gca()
-#     ax.set_xticks([])   # Hide the x and y axis ticks
-#     ax.set_yticks([])
-    
-#     if path is None:
-#         plt.show()
-#     else:
-#         path += path_ending
-#         plt.subplots_adjust(right=0.7)
-#         plt.savefig(path, bbox_inches="tight")
-#         plt.close()
-#     print("\tEmbedding visulization saved")
-
-
+    return fig
 
 
 
@@ -892,10 +828,12 @@ def plot_all_class_lrp_dist(celltypes, gene_names,
     print("\tZ mu LRP relavance genes saved")
 
 
-def plot_lrp_dist(celltypes, gene_names, num_classes, lrp_path, exp_code, **kwargs):
+def plot_lrp_dist(celltypes, gene_names, num_classes, lrp_path, exp_code=None, **kwargs):
     """
     Plot the histogram of LRP scores of all genes for each cell type
     """
+    if exp_code is None:
+        exp_code = 'protocloud'
     filename = '_' + exp_code + '_relgenes.npy'
 
     df_top_genes = pd.DataFrame()

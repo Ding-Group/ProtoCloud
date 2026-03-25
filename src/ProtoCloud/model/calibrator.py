@@ -8,19 +8,54 @@ from sklearn.metrics import brier_score_loss, log_loss
 
 
 class simCalibration():
+    """Isotonic regression-based calibration for prototype similarity scores.
+
+    Fits per-cell-type and global isotonic regression calibrators to
+    convert raw similarity scores into calibrated probability estimates
+    of prediction correctness.
+
+    Attributes
+    ----------
+    calibrators : dict
+        Mapping from cell type name to fitted ``IsotonicRegression``
+        calibrator or ``'global'`` if using the global fallback.
+    global_calibrator : IsotonicRegression or None
+        Global calibrator fitted on all samples.
+    cell_type_stats : dict
+        Per-cell-type statistics (count, accuracy, mean/std similarity).
+    """
+
     def __init__(self):
         self.calibrators = {}
         self.global_calibrator = None
         self.cell_type_stats = {}
     
     def save(self, file_dir):
-        """Save the trained calibrator to a file."""
+        """Serialize the calibrator to a pickle file.
+
+        Parameters
+        ----------
+        file_dir : str
+            Directory path. The file is saved as
+            ``file_dir + 'calibrator_model.pkl'``.
+        """
         with open(file_dir + "calibrator_model.pkl", 'wb') as f:
             pickle.dump(self, f)
     
     @classmethod
     def load(cls, file_dir):
-        """Load a trained calibrator from a file."""
+        """Load a saved calibrator from a pickle file.
+
+        Parameters
+        ----------
+        file_dir : str
+            Directory path containing ``'calibrator_model.pkl'``.
+
+        Returns
+        -------
+        simCalibration
+            The deserialized calibrator instance.
+        """
         with open(file_dir + "calibrator_model.pkl", 'rb') as f:
             return pickle.load(f)
         
@@ -31,8 +66,19 @@ class simCalibration():
     #     else:
     #         raise ValueError(f"Prediction column not found: {pred_column}")
     
-    # def fit(self, df, similarity_col='sim_score', celltype_col='Actual', pred_column='protoCloud'):
+
     def fit(self, similarity_score, true_labels, pred_labels):
+        """Fit global and per-cell-type isotonic regression calibrators.
+
+        Parameters
+        ----------
+        similarity_score : numpy.ndarray
+            Raw similarity scores from the model.
+        true_labels : numpy.ndarray
+            Ground truth cell type labels.
+        pred_labels : numpy.ndarray
+            Predicted cell type labels.
+        """
         # ground truth
         y_true = (pred_labels == true_labels).astype(int)
         X = similarity_score
@@ -73,10 +119,22 @@ class simCalibration():
     
 
     def predict_proba(self, similarity_score, pred_labels):
-        """
-        Returns:
-        --------
-        calibrated_certainty : array
+        """Compute calibrated probabilities from raw similarity scores.
+
+        Uses cell-type-specific calibrators when available, falling
+        back to the global calibrator for unseen types.
+
+        Parameters
+        ----------
+        similarity_score : numpy.ndarray
+            Raw similarity scores from the model.
+        pred_labels : numpy.ndarray
+            Predicted cell type labels.
+
+        Returns
+        -------
+        numpy.ndarray
+            Calibrated probability scores, shape ``(n_samples,)``.
         """
         X = similarity_score
         cell_types = pred_labels
@@ -96,25 +154,42 @@ class simCalibration():
         return calibrated_certainty
     
 
-    def evaluate_calibration(self, similarity_score, true_labels, pred_labels):
+    def evaluate_calibration(self, similarity_score, calibrated_score, true_labels, pred_labels):
+        """Evaluate calibration using Brier score and ECE.
+
+        Computes metrics before and after calibration and prints
+        the improvement.
+
+        Parameters
+        ----------
+        similarity_score : numpy.ndarray
+            Raw similarity scores from the model.
+        true_labels : numpy.ndarray
+            Ground truth cell type labels.
+        pred_labels : numpy.ndarray
+            Predicted cell type labels.
+
+        Returns
+        -------
+        dict or None
+            Dictionary with keys ``'brier_score_original'``,
+            ``'brier_score_calibrated'``, ``'ece_original'``,
+            ``'ece_calibrated'``, ``'brier_improvement'``,
+            ``'ece_improvement'``. Returns None if evaluation fails.
         """
-        Use Brier score to evaluate calibration performance.
-        Returns:
-        --------
-        results : dict"""
         y_true = (pred_labels == true_labels).astype(int)
-        y_prob_calibrated = self.predict_proba(similarity_score, pred_labels)
-        
+        y_prob_calibrated = calibrated_score
+
         try:
             brier_original = brier_score_loss(y_true, similarity_score)
             brier_calibrated = brier_score_loss(y_true, y_prob_calibrated)
             ece_org = self.expected_calibration_error(similarity_score, y_true, n_bins=20)
             ece_cal = self.expected_calibration_error(y_prob_calibrated, y_true, n_bins=20)
             
-            print(f"Original Brier Score: {brier_original:.4f}, ECE: {ece_org:.4f}")
-            print(f"Calibrated Brier Score: {brier_calibrated:.4f}, ECE: {ece_cal:.4f}")
-            print(f"Brier Improvement: {brier_original - brier_calibrated}")
-            print(f"ECE Improvement: {ece_org - ece_cal}")
+            print(f"\tOriginal Brier Score: {brier_original:.4f}, ECE: {ece_org:.4f}")
+            print(f"\tCalibrated Brier Score: {brier_calibrated:.4f}, ECE: {ece_cal:.4f}")
+            print(f"\tBrier Improvement: {brier_original - brier_calibrated}")
+            print(f"\tECE Improvement: {ece_org - ece_cal}")
 
             results = {
                 'brier_score_original': brier_original,
@@ -133,6 +208,22 @@ class simCalibration():
 
     @staticmethod
     def expected_calibration_error(probs, labels, n_bins=20):
+        """Compute Expected Calibration Error (ECE).
+
+        Parameters
+        ----------
+        probs : numpy.ndarray
+            Predicted probabilities.
+        labels : numpy.ndarray
+            Binary ground truth (1 = correct, 0 = incorrect).
+        n_bins : int, optional
+            Number of bins for discretization, by default 20.
+
+        Returns
+        -------
+        float
+            ECE value in [0, 1].
+        """
         bins  = np.linspace(0.0, 1.0, n_bins+1)
         idx   = np.digitize(probs, bins[1:-1], right=True)
         ece   = 0.0
@@ -145,13 +236,33 @@ class simCalibration():
         return ece
     
     def get_cell_type_stats(self):
+        """Get per-cell-type calibration statistics as a DataFrame.
+
+        Returns
+        -------
+        pandas.DataFrame
+            DataFrame indexed by cell type with columns: ``count``,
+            ``accuracy``, ``mean_similarity``, ``std_similarity``.
+        """
         return pd.DataFrame(self.cell_type_stats).T
 
     def extract_features(self, sim_matrix, top_k=2):
-        """
-        Returns:
-        --------
-        features : numpy.array
+        """Extract top-k similarity features from the similarity matrix.
+
+        Parameters
+        ----------
+        sim_matrix : numpy.ndarray
+            Similarity matrix of shape ``(n_cells, n_prototypes)``.
+        top_k : int, optional
+            Number of top similarities to extract per cell. If
+            ``top_k >= n_prototypes``, all similarities are returned,
+            by default 2.
+
+        Returns
+        -------
+        numpy.ndarray
+            Feature matrix of shape
+            ``(n_cells, min(top_k, n_prototypes))``.
         """
         n_cells, n_prototypes = sim_matrix.shape
 
