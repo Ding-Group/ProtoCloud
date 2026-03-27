@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "ProtoCloud"             # pip install ProtoCloud
 version = "1.0.0"
-description = ""
+description = "ProtoCloud is a prototype-based interpretable deep learning model for single-cell RNA sequence analysis. It combines variational autoencoder (VAE) architecture with prototype learning to provide both cell type classification and interpretable features."
 authors = [
     {name = "Kaiyun Guo"},
     {name = "Jiarui Ding"},
@@ -13,6 +13,11 @@ authors = [
 readme = "README.md"
 license = { text = "MIT" }
 requires-python = ">=3.9"
+keywords = ["single-cell", "RNA-seq", "deep learning", "interpretability", "prototypes", "VAE"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+]
 
 dependencies = [
     "numpy>=1.26.4",
@@ -28,6 +33,9 @@ dependencies = [
     "seaborn>=0.13.2",
     "umap-learn>=0.5.6",
 ]
+
+[project.urls]
+Homepage = "https://github.com/Ding-Group/ProtoCloud"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
