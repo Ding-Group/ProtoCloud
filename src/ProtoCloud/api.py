@@ -16,6 +16,10 @@ from .utils.utils import (
     data_info_saver, data_info_loader, process_prediction_file,
     get_cls_threshold, identify_TypeError, get_threshold, makedir,
 )
+from .prp import (
+    convert_protocloud_to_lrp, generate_PRP_explanations,
+    lrp_params_def1, rule_map,
+)
 
 
 class ProtoCloudModel:
@@ -400,6 +404,99 @@ class ProtoCloudModel:
             X = np.asarray(aligned, dtype=np.float32)
 
         return X
+
+    def compute_prp(self, adata, save_dir,
+                    celltype_col='celltype',
+                    count_layer='counts',
+                    exp_code='protocloud',
+                    use_full_data=False):
+        """Compute Prototype Relevance Propagation gene-relevance explanations.
+
+        Wraps ``convert_protocloud_to_lrp`` and ``generate_PRP_explanations``.
+        Results are saved to ``save_dir`` — use ``anndata.read_h5ad`` to load
+        the prototype-level AnnData, or read ``celltype_PRP.csv`` for
+        celltype-level weighted scores.
+
+        Parameters
+        ----------
+        adata : anndata.AnnData
+            Annotated data matrix. Must contain ``adata.var['gene_name']``
+            and cell type labels in ``adata.obs[celltype_col]``.
+            By default, only cells at ``self._train_idx`` are used.
+        save_dir : str
+            Directory to write PRP output files.
+        celltype_col : str
+            Column in ``adata.obs`` with cell type labels.
+        count_layer : str
+            Layer name for raw counts.
+        exp_code : str
+            Experiment code used in output file names.
+        use_full_data : bool
+            If True, use all cells in adata. If False (default), use only
+            the training split stored in ``self._train_idx``.
+        """
+        assert self._model is not None, "Model not trained. Call fit_model first."
+
+        # 1. Subset to training data unless use_full_data
+        if use_full_data:
+            adata_subset = adata
+        else:
+            assert self._train_idx is not None, (
+                "No train_idx available. Either call fit_model first, "
+                "load a model that has train_idx.npy, or set use_full_data=True."
+            )
+            adata_subset = adata[self._train_idx]
+
+        # 2. Align genes and extract counts
+        X = self._align_genes(adata_subset, count_layer)
+        Y_str = adata_subset.obs[celltype_col].values
+        Y = self._cell_encoder.transform(Y_str)
+
+        # 3. Build fresh LRP-wrapped model
+        model_wrapped = protoCloud(**self._model_dict).to(self._device)
+        convert_protocloud_to_lrp(
+            model_wrapped, self._model,
+            lrp_params_def1, rule_map,
+        )
+
+        # 4. Build data shim
+        data_shim = _PRPDataShim(
+            gene_names=self._gene_names,
+            cell_encoder=self._cell_encoder,
+            dataset_name=exp_code,
+        )
+
+        # 5. Detect incremental update checkpoint
+        pretrain_pth = None
+        if self._load_dir is not None:
+            checkpoint_path = os.path.join(self._load_dir, 'prototype_checkpoint.npy')
+            if os.path.exists(checkpoint_path):
+                pretrain_pth = os.path.join(self._load_dir, 'protocloud.pth')
+
+        # 6. Ensure save_dir exists and ends with os.sep (line 414 of lrp.py
+        #    uses string concat: prp_path + filename)
+        makedir(save_dir)
+        if not save_dir.endswith(os.sep):
+            save_dir = save_dir + os.sep
+
+        # 7. Generate PRP explanations
+        checkpoint = generate_PRP_explanations(
+            model_wrapped, X, Y, data_shim,
+            epsilon=self._model.epsilon,
+            num_classes=len(self._cell_encoder.classes_),
+            prototypes_per_class=self.num_prototypes_per_class,
+            prp_path=save_dir,
+            exp_code=exp_code,
+            pretrain_model_pth=pretrain_pth,
+        )
+
+        # 8. Save prototype checkpoint for future incremental updates
+        np.save(os.path.join(save_dir, 'prototype_checkpoint.npy'), checkpoint)
+
+        print(f"PRP results saved to {save_dir}")
+        print(f"  - Prototype AnnData: {exp_code}_prp.h5ad")
+        print(f"  - Celltype scores:   celltype_PRP.csv")
+        print(f"  - Per-class .npy:    <celltype>_{exp_code}_relgenes.npy")
 
 
 def _extract_counts(adata, count_layer):
