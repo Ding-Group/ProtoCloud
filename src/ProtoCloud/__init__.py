@@ -8,6 +8,8 @@ except PackageNotFoundError:
 from ProtoCloud import glo
 from ProtoCloud.model import protoCloud
 
+from ProtoCloud.api import ProtoCloudModel
+
 from ProtoCloud import model
 from ProtoCloud import data
 from ProtoCloud import prp
@@ -66,7 +68,7 @@ from ProtoCloud.viz import (EPS, device, get_UMAP, get_color, map_color,
                             plot_prp_dist, plot_top_gene_PRP_dotplot,
                             plot_umap,)
 
-__all__ = ["glo", "protoCloud", "model", "scRNAData", "prp", "utils", "viz"]   
+__all__ = ["glo", "protoCloud", "ProtoCloudModel", "model", "scRNAData", "prp", "utils", "viz"]
 # __all__ = ['simCalibration', 'CustomDataset', 'EPS', 'LRP_FILTER_TOP_K',
 #            'Modulenotfounderror', 'add_epsilon_fn', 'all_to_coo',
 #            'batchnorm1d_wrapper_fct', 'bnafterlinear_overwrite_intolinear',
