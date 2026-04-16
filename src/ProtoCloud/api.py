@@ -293,6 +293,9 @@ class ProtoCloudModel:
         data_info_saver(self._cls_threshold, model_dir, 'cls_threshold')
         self._calibrator.save(model_dir_sep)
 
+        if self._train_idx is not None:
+            np.save(os.path.join(model_dir, 'train_idx.npy'), self._train_idx)
+
     @classmethod
     def load(cls, model_dir, device=None):
         """Load a saved ProtoCloudModel from a directory.
@@ -330,6 +333,12 @@ class ProtoCloudModel:
 
         model_dir_sep = model_dir if model_dir.endswith(os.sep) else model_dir + os.sep
         instance._calibrator = simCalibration.load(model_dir_sep)
+
+        instance._load_dir = model_dir
+
+        train_idx_path = os.path.join(model_dir, 'train_idx.npy')
+        if os.path.exists(train_idx_path):
+            instance._train_idx = np.load(train_idx_path)
 
         # sync architecture hyperparameters from model_dict
         instance.latent_dim = instance._model_dict.get('latent_dim', 20)
