@@ -494,3 +494,13 @@ def _augment_rares(X, Y, cell_encoder):
         del rare, rates
 
     return new_X.numpy(), new_Y.numpy()
+
+
+class _PRPDataShim:
+    """Minimal stand-in for scRNAData, providing the three attributes
+    that generate_PRP_explanations reads from its ``data`` parameter."""
+
+    def __init__(self, gene_names, cell_encoder, dataset_name):
+        self.gene_names = gene_names
+        self.cell_encoder = cell_encoder
+        self.dataset_name = dataset_name
