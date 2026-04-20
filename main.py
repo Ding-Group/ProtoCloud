@@ -1,23 +1,13 @@
-import os
+import os, sys
+# use local src code instad of installed package
+src_path = os.path.join(os.path.dirname(__file__), 'src')
+if src_path not in sys.path:
+    sys.path.insert(0, src_path)
+
 import numpy as np
 import pandas as pd
 import torch
 import pickle
-
-# # Set Global variables
-# import ProtoCloud.glo as glo
-# glo._init()
-# glo.set_value('EPS', 1e-16)
-# glo.set_value('LRP_FILTER_TOP_K', 0.1)
-
-# from src.utils import *
-# # from src.data import *
-# from src.scRNAdata import *
-# from src.train import *
-# from src.calibrator import *
-# from src.plot import *
-# from src.lrp import *
-# from src.model import protoCloud
 
 import ProtoCloud
 
@@ -383,7 +373,7 @@ parser.add_argument('--index_file',  type = str, default = None, help = 'Full pa
 #######################################################
 ### ----Model Parameters----
 parser.add_argument('--model_name',       type = str, default = 'protoCloud')
-parser.add_argument('--model_mode',  type = str, default = "test", choices = ["train", "test", "apply", "plot"],
+parser.add_argument('--model_mode',  type = str, default = "apply", choices = ["train", "test", "apply", "plot"],
                     help = "train model; test: z_mu for pred; apply: all data with reparametrization; plot: load and plot result files using test data")
 parser.add_argument('--cont_train',  type = int, default = 0, help = 'Load existing model and continue training')
 parser.add_argument('--model_validation',  type = int, default = 1, choices = [0, 1], help = 'validation accuracy in training stage')
@@ -430,7 +420,8 @@ parser.add_argument('--plot_prp',       type = int, default = 0, choices = [0, 1
 
 
 args = parser.parse_args()
-
+from datetime import datetime
+_run_ts = datetime.now().strftime('%Y%m%d_%H%M')
 
 # set device
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -451,13 +442,13 @@ print("Experiment Name:", args.exp_code)
 # data directory
 ProtoCloud.utils.makedir(args.data_dir)
 
+ProtoCloud.utils.makedir(args.model_dir)
 # save model directory
-model_dir = args.model_dir + args.dataset_name + '/'
-args.model_dir = model_dir
+args.model_dir = args.model_dir + args.dataset_name + '_' + _run_ts + '/'
 ProtoCloud.utils.makedir(args.model_dir)
 
 # results directory
-args.results_dir = args.results_dir + args.dataset_name + '/'
+args.results_dir = args.results_dir + args.dataset_name + '_' + _run_ts + '/'
 ProtoCloud.utils.makedir(args.results_dir)
 args.plot_dir = args.results_dir + 'plots/'
 ProtoCloud.utils.makedir(args.plot_dir)
@@ -498,6 +489,8 @@ if args.prp:
 #     ProtoCloud.utils.makedir(args.lrp_path)
 #     args.plot_lrp = 1
 
+
+_tee = ProtoCloud.utils.Tee(args.results_dir + 'training.log')
 
 print('------args---------')
 print(args)

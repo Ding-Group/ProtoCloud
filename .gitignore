@@ -34,3 +34,13 @@ ENV/
 .pytest_cache/
 .coverage
 htmlcov/
+
+.claude/
+.docs/
+docs/
+CLAUDE.md
+saved_models/
+results/
+tutorial/*
+!tutorial/*.ipynb
+!tutorial/*.md

@@ -17,6 +17,25 @@ import joblib
 import ProtoCloud.glo as glo
 EPS = glo.get_value('EPS')
 
+class Tee:
+    """Redirect stdout to both terminal and a log file."""
+    def __init__(self, log_path):
+        self._file = open(log_path, 'w', buffering=1)
+        self._stdout = sys.stdout
+        sys.stdout = self
+
+    def write(self, data):
+        self._stdout.write(data)
+        self._file.write(data)
+
+    def flush(self):
+        self._stdout.flush()
+        self._file.flush()
+
+    def close(self):
+        sys.stdout = self._stdout
+        self._file.close()
+
 
 ### Settings
 #######################################################
