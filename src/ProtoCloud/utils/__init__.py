@@ -1,6 +1,6 @@
 from ProtoCloud.utils import utils
 
-from ProtoCloud.utils.utils import (EPS, all_to_coo, calculate_batch_entropy,
+from ProtoCloud.utils.utils import (EPS, Tee, all_to_coo, calculate_batch_entropy,
                                     compute_threshold, data_info_loader,
                                     data_info_saver, get_avg_expression,
                                     get_cls_threshold, get_custom_exp_code,
@@ -15,7 +15,7 @@ from ProtoCloud.utils.utils import (EPS, all_to_coo, calculate_batch_entropy,
                                     save_file, save_model, save_model_dict,
                                     save_prototype_cells, seed_torch,)
 
-__all__ = ['EPS', 'all_to_coo', 'calculate_batch_entropy', 'compute_threshold',
+__all__ = ['EPS', 'Tee', 'all_to_coo', 'calculate_batch_entropy', 'compute_threshold',
            'data_info_loader', 'data_info_saver', 'get_avg_expression',
            'get_cls_threshold', 'get_custom_exp_code', 'get_dotplot',
            'get_threshold', 'identify_TypeError', 'load_file',

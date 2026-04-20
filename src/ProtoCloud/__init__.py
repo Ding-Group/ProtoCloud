@@ -43,7 +43,7 @@ from ProtoCloud.prp import (EPS, LRP_FILTER_TOP_K, Modulenotfounderror,
                             rule_map, safe_divide, sim_score_eps_wrapper_fct,
                             tensorlist_todict, twoparam_wrapper_class, x_lrp,
                             x_prp1, z_recon, zeroparam_wrapper_class,)
-from ProtoCloud.utils import (EPS, all_to_coo, calculate_batch_entropy,
+from ProtoCloud.utils import (EPS, Tee, all_to_coo, calculate_batch_entropy,
                               compute_threshold, data_info_loader,
                               data_info_saver, get_avg_expression,
                               get_cls_threshold, get_custom_exp_code,
