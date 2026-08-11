@@ -708,6 +708,8 @@ def plot_gene_expression(adata, celltypes, gene_names, plot_dir, **kwargs):
         celltype = celltypes[i]
         subadata = adata[adata.obs['celltype'] == celltype]
         gene_expr = subadata.layers['counts'].mean(axis=0) if 'counts' in subadata.layers else subadata.X.mean(axis=0)
+        # sparse .mean(axis=0) returns np.matrix of shape (1, n_genes)
+        gene_expr = np.asarray(gene_expr).ravel()
         
         # Plot per prototype on subplot
         ax.plot(list(range(len(gene_expr))), gene_expr)
@@ -750,6 +752,8 @@ def plot_gene_rel_VS_expr(adata, celltypes, gene_names, prp_path, **kwargs):
         gene_rel = class_rel.iloc[i, :]
         subadata = adata[adata.obs['celltype'] == celltype]
         gene_expr = subadata.layers['counts'].mean(axis=0) if 'counts' in subadata.layers else subadata.X.mean(axis=0)
+        # sparse .mean(axis=0) returns np.matrix of shape (1, n_genes)
+        gene_expr = np.asarray(gene_expr).ravel()
         
         top_n = 20
         df = pd.DataFrame(gene_rel.values).T

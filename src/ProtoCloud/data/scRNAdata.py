@@ -330,7 +330,7 @@ class scRNAData():
 
 
         if data_balance and model_mode == "train":
-            train_X, train_Y = self.augment_rares(train_X, train_Y)
+            train_X, train_Y = self.augment_rares(train_X, train_Y, self.cell_encoder)
         # for c in np.unique(train_Y):
         #     portion = np.sum(train_Y == c) / train_Y.shape[0]
         #     print(self.cell_encoder.inverse_transform([c]), "%.3f"%portion)
@@ -339,11 +339,11 @@ class scRNAData():
 
 
     @staticmethod
-    def augment_rares(X, Y):
+    def augment_rares(X, Y, cell_encoder=None):
         """Oversample rare cell types via multinomial sampling.
 
         Cell types with fewer cells than ``1 / (2 * num_of_celltypes)`` of the
-        total are considered rare. 
+        total are considered rare.
 
         Parameters
         ----------
@@ -351,6 +351,9 @@ class scRNAData():
             Gene expression matrix of shape ``(n_cells, n_genes)``.
         Y : numpy.ndarray
             Numeric cell type labels of shape ``(n_cells,)``.
+        cell_encoder : sklearn.preprocessing.LabelEncoder or None, optional
+            Fitted label encoder, used only to print the names of the rare
+            cell types. Names are omitted if None, by default None.
 
         Returns
         -------
@@ -371,7 +374,8 @@ class scRNAData():
                 num_sample += min_type_num - num_cells
                 rares.append(c)
         print("Rare cell types:", len(rares))
-        print("\tRare cell types:", [self.cell_encoder.inverse_transform([c])[0] for c in rares])
+        if cell_encoder is not None:
+            print("\tRare cell types:", [cell_encoder.inverse_transform([c])[0] for c in rares])
         print(f"\tTotal samples to add: {num_sample}")
         new_X = torch.zeros((X.shape[0] + num_sample, X.shape[1]))
         new_Y = torch.zeros(Y.shape[0] + num_sample, dtype=int)

@@ -191,8 +191,13 @@ def main(args):
         predicted = ProtoCloud.utils.process_prediction_file(predicted, model_encoder, label, 
                                             model_dir = os.path.dirname(args.pretrain_model_pth) if args.pretrain_model_pth is not None else args.model_dir)
         
-        # apply similarity calibrator
-        loaded_calibrator = ProtoCloud.model.simCalibration.load(args.model_dir)
+        # apply similarity calibrator (saved next to the model that produced it;
+        # simCalibration.load concatenates strings, so pass a trailing separator)
+        if args.pretrain_model_pth is not None and args.model_mode != "train":
+            calibrator_dir = os.path.dirname(args.pretrain_model_pth) + os.sep
+        else:
+            calibrator_dir = args.model_dir
+        loaded_calibrator = ProtoCloud.model.simCalibration.load(calibrator_dir)
         calibrated_certainty = loaded_calibrator.predict_proba(predicted['sim_score'].values, predicted['pred1'].values)
         predicted['calibrated_certainty'] = calibrated_certainty
         
