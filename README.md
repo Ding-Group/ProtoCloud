@@ -5,32 +5,78 @@
 
 ProtoCloud is a prototype-based interpretable deep learning model for single-cell RNA sequence analysis. It combines variational autoencoder (VAE) architecture with prototype learning to provide both cell type classification and interpretable features.
 
+![ProtoCloud overview: scRNA-seq UMI counts and reference cell types are encoded into a prototype-structured latent space, yielding a predicted cell type with a similarity score and a certain/ambiguous call, plus gene-level explanations obtained by propagating prototype relevance back to the input genes.](assets/graphical_abstract.png)
+
+*Graphical abstract from Guo & Ding, Cell Genomics (2026).*
+
 ## Installation
 
+ProtoCloud is installed from source.
+
 ```bash
-conda env create -f requirements.yml
-conda activate protocloud
-!pip install -e .
+git clone https://github.com/Ding-Group/ProtoCloud.git
+cd ProtoCloud
+pip install -e .
 ```
 
-Dependencies:
-  - numpy>=1.26.4
-  - pandas>=2.2.2
-  - scipy>=1.13.1
-  - scanpy>=1.10.2
-  - anndata>=0.10.8
-  - scikit-learn
-  - pytorch>=1.12.1
-  - torchvision>=0.13.1
-  - matplotlib
-  - matplotlib_venn
-  - seaborn
-  - umap-learn
+To install into a dedicated conda environment instead:
+
+```bash
+git clone https://github.com/Ding-Group/ProtoCloud.git
+cd ProtoCloud
+conda env create -f requirements.yml   # creates an environment named protoCloud
+conda activate protoCloud
+pip install -e .
+```
+
+Check that the installation worked:
+
+```bash
+python -c "import ProtoCloud; print(ProtoCloud.__version__)"
+```
+
+Core dependencies (see `pyproject.toml` for the exact pip requirements):
+numpy, pandas, scipy, scanpy, anndata, scikit-learn, torch, torchvision,
+matplotlib, matplotlib-venn, seaborn, umap-learn.
+
+
+**Command line.** `main.py` sits at the repository root and is not installed as a
+console command, so the terminal workflow is run as `python main.py` from inside a
+clone of this repository.
 
 ## Usage
 
-ProtoCloud can be used in **two different ways: via terminal call or package installation** —whichever fits best with your workflow.
-For terminal usage examples, see [tutorial/terminal_tutorial.md](tutorial/terminal_tutorial.md). For API usage, see [tutorial/api_tutorial.ipynb](tutorial/api_tutorial.ipynb).
+ProtoCloud can be used in **two different ways: via terminal call or package installation** — whichever fits best with your workflow.
+
+The shortest terminal run: put your dataset at `./data/ref_dataset.h5ad`, with cell type
+labels in `adata.obs['celltype']`, gene names in `adata.var['gene_name']` and raw counts
+in `adata.layers['counts']`. Then, from the repository root:
+
+```bash
+python main.py --dataset_name ref_dataset --model_mode train
+```
+
+This writes the trained model to `./saved_models/ref_dataset/`, and the predictions,
+plots and gene-level PRP explanations to `./results/ref_dataset/`.
+
+To annotate another dataset with that model, put it at `./data/query_dataset.h5ad` and
+point `--pretrain_model_pth` at the checkpoint the training run wrote:
+
+```bash
+python main.py \
+  --dataset_name query_dataset \
+  --model_mode apply \
+  --pretrain_model_pth ./saved_models/ref_dataset/protoCloud_lr1e-03_e100_b128_ref_dataset.pth
+```
+
+The query dataset needs `adata.var['gene_name']` but not `adata.obs['celltype']`. Genes are
+matched to the reference model by name, so the two datasets need not share a gene set;
+missing genes are zero-filled and the overlap is reported. Per-cell results are written to
+`./results/query_dataset/<exp_code>_pred.csv`, with the predicted type in `pred1`, the
+prototype similarity in `sim_score`, and the certainty calls in `certainty` and
+`calibrated_certainty`.
+
+For more terminal usage examples, see [tutorial/terminal_tutorial.md](tutorial/terminal_tutorial.md). For API usage, see [tutorial/api_tutorial.ipynb](tutorial/api_tutorial.ipynb).
 
 
 ## Citation

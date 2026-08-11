@@ -39,6 +39,9 @@ htmlcov/
 .docs/
 docs/
 CLAUDE.md
+PROGRESS.md
+RELEASE_NOTES_DRAFT.md
+data/
 saved_models/
 results/
 tutorial/*
