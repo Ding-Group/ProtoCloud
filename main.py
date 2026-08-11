@@ -11,6 +11,26 @@ import pickle
 
 import ProtoCloud
 
+
+def try_plot(plot_fn, *plot_args, **plot_kwargs):
+    """Run a plotting call, reporting failures instead of aborting the run.
+
+    Plots are a by-product of a run: a missing file or a degenerate class
+    should not throw away the model, the predictions or the PRP scores.
+
+    Parameters
+    ----------
+    plot_fn : callable
+        Plotting function to call.
+    *plot_args, **plot_kwargs
+        Arguments forwarded to ``plot_fn``.
+    """
+    try:
+        plot_fn(*plot_args, **plot_kwargs)
+    except Exception as e:
+        print(f"\tError in {plot_fn.__name__}: {type(e).__name__}: {e}")
+
+
 def main(args):
     args_dict = vars(args)
     
@@ -227,16 +247,15 @@ def main(args):
     orig = predicted['label']
     pred = predicted['pred1']
     same_label = all(x in np.unique(orig) for x in np.unique(pred))
-    # try:
     if args.plot_trend:
-        ProtoCloud.viz.plot_epoch_trend(**args_dict)
+        try_plot(ProtoCloud.viz.plot_epoch_trend, **args_dict)
     if args.protocorr:
-        ProtoCloud.viz.plot_protocorr_heatmap(args, data)
-    
+        try_plot(ProtoCloud.viz.plot_protocorr_heatmap, args, data)
+
     if args.cm and test_Y is not None:
-        ProtoCloud.viz.plot_confusion_matrix(args)
-    
-        ProtoCloud.viz.plot_prediction_summary(predicted, data.cell_encoder.classes_, 
+        try_plot(ProtoCloud.viz.plot_confusion_matrix, args)
+
+        try_plot(ProtoCloud.viz.plot_prediction_summary, predicted, data.cell_encoder.classes_,
                                 path = plot_path,
                                 plot_mis_pred = same_label,
                                 **args_dict)
@@ -246,7 +265,7 @@ def main(args):
         proto_embedding = ProtoCloud.utils.load_file(args.results_dir, args.exp_code, '_prototypes.npy')
 
     if args.umap:
-        ProtoCloud.viz.plot_latent_embedding(latent_embedding,
+        try_plot(ProtoCloud.viz.plot_latent_embedding, latent_embedding,
                             proto_embedding,
                             pred=pred, orig=orig,
                             proto_label=data.cell_encoder.classes_,
@@ -255,10 +274,10 @@ def main(args):
                             **args_dict)
 
     if args.two_latent:
-        ProtoCloud.viz.plot_direct_latent(
+        try_plot(ProtoCloud.viz.plot_direct_latent,
             pc_latent=latent_embedding,
             proto_latent=proto_embedding,
-            adata=data.adata,
+            adata=data.adata[test_idx],
             model_labels=data.cell_encoder.classes_,
             result_path=args.results_dir,
             data_name=args.dataset_name,
@@ -272,12 +291,9 @@ def main(args):
         )
     
     if args.distance_dist:
-        ProtoCloud.viz.plot_distance_to_prototypes(args, data)
-    
-    ProtoCloud.viz.plot_gene_expression(data.adata, data.cell_encoder.classes_, data.gene_names, **args_dict)
-    
-    # except Exception as e:
-    #     print("Error plotting:", e)
+        try_plot(ProtoCloud.viz.plot_distance_to_prototypes, args, data)
+
+    try_plot(ProtoCloud.viz.plot_gene_expression, data.adata, data.cell_encoder.classes_, data.gene_names, **args_dict)
 
 
     #######################################################
@@ -329,13 +345,13 @@ def main(args):
 
     if args.plot_prp:
         print("Ploting PRP visulization")
-        ProtoCloud.viz.plot_prp_dist(data.cell_encoder.classes_, data.gene_names, **args_dict)
-        ProtoCloud.viz.plot_marker_venn_diagram(data.adata, **args_dict)
-        ProtoCloud.viz.plot_top_gene_PRP_dotplot(data.cell_encoder.classes_, data.gene_names, 
-                                num_protos = 1, top_num_genes = 10, 
+        try_plot(ProtoCloud.viz.plot_prp_dist, data.cell_encoder.classes_, data.gene_names, **args_dict)
+        try_plot(ProtoCloud.viz.plot_marker_venn_diagram, data.adata, **args_dict)
+        try_plot(ProtoCloud.viz.plot_top_gene_PRP_dotplot, data.cell_encoder.classes_, data.gene_names,
+                                num_protos = 1, top_num_genes = 10,
                                 celltype_specific = False, save_markers = False, **args_dict)
-        ProtoCloud.viz.plot_gene_relevance(data.cell_encoder.classes_, data.gene_names, **args_dict)
-        ProtoCloud.viz.plot_gene_rel_VS_expr(data.adata, data.cell_encoder.classes_, data.gene_names, **args_dict)
+        try_plot(ProtoCloud.viz.plot_gene_relevance, data.cell_encoder.classes_, data.gene_names, **args_dict)
+        try_plot(ProtoCloud.viz.plot_gene_rel_VS_expr, data.adata, data.cell_encoder.classes_, data.gene_names, **args_dict)
     
         
     # if args.plot_lrp:
@@ -425,8 +441,6 @@ parser.add_argument('--plot_prp',       type = int, default = 0, choices = [0, 1
 
 
 args = parser.parse_args()
-from datetime import datetime
-_run_ts = datetime.now().strftime('%Y%m%d_%H%M')
 
 # set device
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -449,11 +463,11 @@ ProtoCloud.utils.makedir(args.data_dir)
 
 ProtoCloud.utils.makedir(args.model_dir)
 # save model directory
-args.model_dir = args.model_dir + args.dataset_name + '_' + _run_ts + '/'
+args.model_dir = args.model_dir + args.dataset_name + '/'
 ProtoCloud.utils.makedir(args.model_dir)
 
 # results directory
-args.results_dir = args.results_dir + args.dataset_name + '_' + _run_ts + '/'
+args.results_dir = args.results_dir + args.dataset_name + '/'
 ProtoCloud.utils.makedir(args.results_dir)
 args.plot_dir = args.results_dir + 'plots/'
 ProtoCloud.utils.makedir(args.plot_dir)

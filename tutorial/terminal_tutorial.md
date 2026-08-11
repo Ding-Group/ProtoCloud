@@ -36,11 +36,11 @@ This document provides an overview of the parameters used in the ProtoCloud. Ple
 
 | Parameter | Description | Default |
 |-----------|-------------|---------|
-| `--dataset_name` | Name of the dataset | `PBMC_10K` |
+| `--dataset_name` | Name of the dataset | - |
 | `--raw` | Use raw data (1) or normalized data (0) | `1` |
 | `--batch_size` | Batch size for training | `128` |
 | `--topngene` | Number of genes to select | - |
-| `--test_ratio` | Ratio of test data | `0.2` |
+| `--test_ratio` | Ratio of test data | `0.1` |
 | `--data_balance` | Balance training data (1) or not (0) | `1` |
 | `--new_label` | Use previous predicted label as target (1) or not (0) | `0` |
 | `--index_file` | Path of split indices `.csv` file with columns `train_idx` and `test_idx` | `None` |
@@ -84,7 +84,7 @@ This document provides an overview of the parameters used in the ProtoCloud. Ple
 | `--plot_trend` | Plot training trend vs epoch | `0` |
 | `--cm` | Plot confusion matrix | `0` |
 | `--umap` | Plot UMAP visualization | `0` |
-| `--two_latent` | Plot misclassified points UMAP | `0` |
+| `--two_latent` | Plot pairs of raw latent dimensions | `0` |
 | `--protocorr` | Plot prototype correlation | `0` |
 | `--distance_dist` | Plot latent distance distribution to prototypes | `0` |
 
@@ -92,31 +92,31 @@ This document provides an overview of the parameters used in the ProtoCloud. Ple
 
 | Parameter    | Description                     | Default |
 | ------------ | ------------------------------- | ------- |
-| `--lrp`      | Generate LRP-based explanations | `1`     |
-| `--plot_lrp` | Plot LRP explanation plots      | `0`     |
+| `--prp`      | Generate PRP-based explanations | `1`     |
+| `--plot_prp` | Plot PRP explanation plots      | `0`     |
 
 ## Examples
 
 **Apply new dataset to a pre-trained model:**
 
 ```bash
-python src/ProtoCloud/main.py \
-  --dataset <data_name>
+python main.py \
+  --dataset_name <data_name> \
   --model_mode apply \
-  --pretrain_model_pth ./saved_models/my_model.pth \
+  --pretrain_model_pth ./saved_models/my_model.pth
 ```
 
 
 **Continue training on existing model:**
 
 ```bash
-python src/ProtoCloud/main.py \
-  --dataset <data_name>
+python main.py \
+  --dataset_name <data_name> \
   --model_mode train \
   --cont_train 1 \
   --epochs 30 \
-  --pretrain_model_pth ./saved_models/<my_model>.pth
-  # <Optional> To use predicted label as new label, you must apply the new data first
+  --pretrain_model_pth ./saved_models/<my_model>.pth \
+  `# <Optional> To use predicted label as new label, you must apply the new data first` \
   --new_label 1 \
   --results_dir <path_to_applied_result_path>
 ```

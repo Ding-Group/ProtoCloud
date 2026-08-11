@@ -277,10 +277,10 @@ def plot_latent_embedding(latent_embedding, proto_embedding=None,
         
         # 2nd-half, celltype
         plot_umap(pc_umap2, cell_labels, type_color=type_color,
-                a=1, s=20, ax=axs[2])
+                a=1, s=20, ax=axs[1])
         plot_protos_umap(proto_umap2, model_labels,
                         prototypes_per_class=6, s=30,
-                        type_color=type_color, ax=axs[2])
+                        type_color=type_color, ax=axs[1])
     
     else:
         batch_labels = adata.obs['batch'].values
@@ -396,7 +396,9 @@ def plot_direct_latent(pc_latent, proto_latent, adata, model_labels,
     """Plot direct 2D latent slice panels in the style of user snippet."""
     labels = adata.obs['celltype'].values
     if type_color is None:
-        type_color = get_color(np.unique(labels))
+        # cells are colored by their own label, prototypes by the model classes,
+        # so the palette has to cover both
+        type_color = get_color(np.union1d(np.unique(labels), model_labels))
 
     n_dim = pc_latent.shape[1]
     max_pairs = n_dim // 2
@@ -420,6 +422,7 @@ def plot_direct_latent(pc_latent, proto_latent, adata, model_labels,
                      axis_y=f'Latent {i * 2 + 2}')
 
         plot_protos_2latent(proto_slice, model_labels,
+                            type_color=type_color,
                             prototypes_per_class=prototypes_per_class,
                             s=proto_size, a=1.0,
                             ax=ax)
